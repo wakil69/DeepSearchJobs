@@ -1,0 +1,125 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"  # management UI at http://localhost:15672
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - deep-search-jobs-dev-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.3
+    ports:
+      - "9200:9200"
+    environment:
+      - node.name=es01
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=admin
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    networks:
+      - deep-search-jobs-dev-network
+
+  # kibana:
+  #   image: docker.elastic.co/kibana/kibana:8.19.3
+  #   container_name: kibana-play2path
+  #   depends_on:
+  #     - elasticsearch
+  #   ports:
+  #     - "5601:5601"
+  #   environment:
+  #     - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+  #     - ELASTICSEARCH_USERNAME=elastic
+  #     - ELASTICSEARCH_PASSWORD=admin
+  #     - SERVER_NAME=kibana
+  #   networks:
+  #     - deep-search-jobs-dev-network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.2.15
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    networks:
+      - deep-search-jobs-dev-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.2.15
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_MESSAGE_MAX_BYTES: 12582912
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 12582912
+      KAFKA_FETCH_MESSAGE_MAX_BYTES: 12582912
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - deep-search-jobs-dev-network
+
+  connect:
+    build: ./backend/db/connect/
+    container_name: connect
+    depends_on:
+      - kafka
+      - elasticsearch
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092                
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
+      ENABLE_DEBEZIUM_SCRIPTING: "true"
+      CONNECT_CONVERTERS_EXCLUDE: "io.debezium.converters.CloudEventsConverter"
+      CONNECT_PRODUCER_OVERRIDE_MAX_REQUEST_SIZE: 10485760   # 10 MB
+      CONNECT_PRODUCER_OVERRIDE_BUFFER_MEMORY: 20971520      # 20 MB
+      CONNECT_CONSUMER_MAX_PARTITION_FETCH_BYTES: 12582912   # 12 MB
+      CONNECT_CONSUMER_FETCH_MAX_BYTES: 12582912             # 12 MB    
+    volumes:
+      - ./backend/db/connect/scripts:/scripts
+      - ./backend/db/.env:/env/.env
+    networks:
+      - deep-search-jobs-dev-network
+      
+volumes:
+  esdata:
+
+networks:
+  deep-search-jobs-dev-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16  

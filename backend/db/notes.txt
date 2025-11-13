@@ -1,0 +1,7 @@
+To make migrations:
+
+cd backend/db/drizzle
+
+npx drizzle-kit generate
+
+NODE_ENV=XXXXX npx drizzle-kit push (XXX: either development or production)

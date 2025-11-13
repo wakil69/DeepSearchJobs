@@ -1,0 +1,24 @@
+{
+  "jobs": {
+    "jobStatusSuccess": "Job status '{{status}}' saved successfully.",
+    "jobStatusError": "Server error while saving job status.",
+    "jobsFetchFailed": "Server error while fetching jobs."
+  },
+  "companies": {
+    "companyUpdateSuccess": "Company '{{name}}' updated successfully.",
+    "companyUpdateError": "Server error while updating the company.",
+    "companyNotFound": "Company not found.",
+    "companiesDeleteSuccess": "{count, plural, one{{count} company deleted successfully.} other{{count} companies deleted successfully.}}",
+    "companiesDeleteError": "Server error while deleting companies.",
+    "noIdsProvided": "No company IDs provided.",
+    "companiesFetchFailed": "Server error while fetching companies.",
+    "companiesQueued": "{count, plural, one{{count} company analysis queued successfully.} other{{count} company analyses queued successfully.}}",
+    "jobsQueued": "{count, plural, one{{count} company analysis job queued successfully.} other{{count} company analysis jobs queued successfully.}}",
+    "queueError": "Failed to queue.",
+    "noFileUploaded": "No file uploaded.",
+    "importSuccess": "{count, plural, one{{count} company imported.} other{{count} companies imported.}}",
+    "importError": "Server error while importing companies.",
+    "unsupportedFileType": "Unsupported file type. Use a CSV or XLSX file.",
+    "noJobPagesFound": "{count, plural, one{{count} company is missing internal or external job listing pages. Please analyze it first or add job listing pages manually: {{names}}.} other{{count} companies are missing internal or external job listing pages. Please analyze them first or add job listing pages manually: {{names}}.}}"
+  }
+}

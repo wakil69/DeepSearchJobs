@@ -1,0 +1,239 @@
+services:
+  backend-play2path:
+    build: ./backend
+    container_name: backend-play2path
+    restart: always
+    env_file:
+      - ./backend/.env.production
+    ports:
+    - "4000:4000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres-play2path:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_started  
+    networks:
+      - deep-search-jobs-network
+
+  frontend-play2path:
+    build: ./frontend
+    restart: always
+    env_file:
+      - ./frontend/.env.production
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend-play2path
+    networks:
+      - deep-search-jobs-network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"  # management UI at http://localhost:15672
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - rabbitmq_data_play2path:/var/lib/rabbitmq
+    networks:
+      - deep-search-jobs-network
+
+  redis:
+    image: redis:8.2
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_play2path:/data
+    networks:
+      - deep-search-jobs-network
+
+  worker-analyser:
+    build: ./worker_async
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres-play2path
+    env_file:
+      - ./worker_async/.env
+    environment:
+      - WORKER_ID=analyser
+      - NODE_ENV=production
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - deep-search-jobs-network
+
+  worker-checker:
+    build: ./worker_async
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres-play2path
+    env_file:
+      - ./worker_async/.env
+    environment:
+      - WORKER_ID=checker
+      - NODE_ENV=production
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - deep-search-jobs-network
+
+  postgres-play2path:
+    image: postgres:16
+    restart: always
+    container_name: postgres-play2path
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: play2path
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data_play2path:/var/lib/postgresql/data
+      - ./backend/db/connect/scripts/configure_postgres_configuration.sh:/scripts/configure_postgres_configuration.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - deep-search-jobs-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.3
+    ports:
+      - "9200:9200"
+    environment:
+      - node.name=es01
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=admin
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - esdata_play2path:/usr/share/elasticsearch/data
+    networks:
+      - deep-search-jobs-network
+
+  # pgadmin:
+  #   image: dpage/pgadmin4:8
+  #   container_name: pgadmin
+  #   restart: always
+  #   depends_on:
+  #     - postgres-play2path
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: admin@admin.com
+  #     PGADMIN_DEFAULT_PASSWORD: admin
+  #   ports:
+  #     - "5050:80"  # open pgAdmin at http://localhost:5050
+  #   volumes:
+  #     - pgadmin_data_play2path:/var/lib/pgadmin
+  #   networks:
+  #     - deep-search-jobs-network
+
+  # kibana:
+  #   image: docker.elastic.co/kibana/kibana:8.19.3
+  #   container_name: kibana-play2path
+  #   depends_on:
+  #     - elasticsearch
+  #   ports:
+  #     - "5601:5601"
+  #   environment:
+  #     - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+  #     - ELASTICSEARCH_USERNAME=elastic
+  #     - ELASTICSEARCH_PASSWORD=admin
+  #     - SERVER_NAME=kibana
+  #   networks:
+  #     - deep-search-jobs-network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.2.15
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    depends_on:
+      - postgres-play2path
+      - elasticsearch
+    networks:
+      - deep-search-jobs-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.2.15
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_MESSAGE_MAX_BYTES: 12582912
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 12582912
+      KAFKA_FETCH_MESSAGE_MAX_BYTES: 12582912
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - deep-search-jobs-network
+
+  connect:
+    build: ./backend/db/connect/
+    depends_on:
+      - kafka
+      - elasticsearch
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092                
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
+      ENABLE_DEBEZIUM_SCRIPTING: "true"
+      CONNECT_CONVERTERS_EXCLUDE: "io.debezium.converters.CloudEventsConverter"
+      CONNECT_PRODUCER_OVERRIDE_MAX_REQUEST_SIZE: 10485760   # 10 MB
+      CONNECT_PRODUCER_OVERRIDE_BUFFER_MEMORY: 20971520      # 20 MB
+      CONNECT_CONSUMER_MAX_PARTITION_FETCH_BYTES: 12582912   # 12 MB
+      CONNECT_CONSUMER_FETCH_MAX_BYTES: 12582912             # 12 MB    
+    volumes:
+      - ./backend/db/connect/scripts:/scripts
+      - ./backend/db/.env:/env/.env
+    networks:
+      - deep-search-jobs-network
+
+
+volumes:
+  postgres_data_play2path:
+  pgadmin_data_play2path:
+  rabbitmq_data_play2path:
+  redis_data_play2path:
+  esdata_play2path:
+
+networks:
+  deep-search-jobs-network:
+    driver: bridge
+  

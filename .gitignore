@@ -1,0 +1,13 @@
+.venv
+.mypy_cache
+tmp
+logs
+.env*
+!.env.example
+!backend/.env.production
+!backend/.env
+node_modules
+dist
+tests
+producer
+__pycache__

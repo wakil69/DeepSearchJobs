@@ -1,0 +1,24 @@
+{
+  "jobs": {
+    "jobStatusSuccess": "تم حفظ حالة الوظيفة «{{status}}» بنجاح.",
+    "jobStatusError": "حدث خطأ في الخادم أثناء حفظ حالة الوظيفة.",
+    "jobsFetchFailed": "حدث خطأ في الخادم أثناء جلب الوظائف."
+  },
+  "companies": {
+    "companyUpdateSuccess": "تم تحديث الشركة «{{name}}» بنجاح.",
+    "companyUpdateError": "حدث خطأ في الخادم أثناء تحديث الشركة.",
+    "companyNotFound": "لم يتم العثور على الشركة.",
+    "companiesDeleteSuccess": "{count, plural, one{تم حذف شركة واحدة بنجاح.} other{تم حذف {count} شركات بنجاح.}}",
+    "companiesDeleteError": "حدث خطأ في الخادم أثناء حذف الشركات.",
+    "noIdsProvided": "لم يتم توفير معرّفات الشركات.",
+    "companiesFetchFailed": "حدث خطأ في الخادم أثناء جلب الشركات.",
+    "companiesQueued": "{count, plural, one{تمت إضافة تحليل شركة واحدة إلى قائمة الانتظار بنجاح.} other{تمت إضافة {count} تحليلات شركات إلى قائمة الانتظار بنجاح.}}",
+    "jobsQueued": "{count, plural, one{تمت إضافة مهمة تحليل شركة واحدة إلى قائمة الانتظار بنجاح.} other{تمت إضافة {count} مهام تحليل شركات إلى قائمة الانتظار بنجاح.}}",
+    "queueError": "فشل في إضافة المهام إلى قائمة الانتظار.",
+    "noFileUploaded": "لم يتم تحميل أي ملف.",
+    "importSuccess": "{count, plural, one{تم استيراد شركة واحدة بنجاح.} other{تم استيراد {count} شركات بنجاح.}}",
+    "importError": "حدث خطأ في الخادم أثناء استيراد الشركات.",
+    "unsupportedFileType": "نوع الملف غير مدعوم. يُرجى استخدام ملف بصيغة CSV أو XLSX.",
+    "noJobPagesFound": "{count, plural, one{شركة واحدة تفتقر إلى صفحات الوظائف الداخلية أو الخارجية. يُرجى تحليلها أولًا أو إضافة الصفحات يدويًا: {{names}}.} other{{count} شركات تفتقر إلى صفحات الوظائف الداخلية أو الخارجية. يُرجى تحليلها أولًا أو إضافة الصفحات يدويًا: {{names}}.}}"
+  }
+}

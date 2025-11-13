@@ -1,0 +1,24 @@
+{
+  "jobs": {
+    "jobStatusSuccess": "El estado del trabajo « {{status}} » se guardó correctamente.",
+    "jobStatusError": "Error del servidor al guardar el estado del trabajo.",
+    "jobsFetchFailed": "Error del servidor al obtener los trabajos."
+  },
+  "companies": {
+    "companyUpdateSuccess": "La empresa « {{name}} » se actualizó correctamente.",
+    "companyUpdateError": "Error del servidor al actualizar la empresa.",
+    "companyNotFound": "Empresa no encontrada.",
+    "companiesDeleteSuccess": "{count, plural, one{Se eliminó correctamente {count} empresa.} other{Se eliminaron correctamente {count} empresas.}}",
+    "companiesDeleteError": "Error del servidor al eliminar las empresas.",
+    "noIdsProvided": "No se proporcionaron identificadores de empresa.",
+    "companiesFetchFailed": "Error del servidor al obtener las empresas.",
+    "companiesQueued": "{count, plural, one{Se añadió correctamente {count} análisis de empresa a la cola.} other{Se añadieron correctamente {count} análisis de empresas a la cola.}}",
+    "jobsQueued": "{count, plural, one{Se añadió correctamente {count} trabajo de análisis de empresa a la cola.} other{Se añadieron correctamente {count} trabajos de análisis de empresa a la cola.}}",
+    "queueError": "Error al añadir a la cola.",
+    "noFileUploaded": "No se subió ningún archivo.",
+    "importSuccess": "{count, plural, one{Se importó correctamente {count} empresa.} other{Se importaron correctamente {count} empresas.}}",
+    "importError": "Error del servidor al importar las empresas.",
+    "unsupportedFileType": "Tipo de archivo no compatible. Utiliza un archivo CSV o XLSX.",
+    "noJobPagesFound": "{count, plural, one{{count} empresa no tiene páginas internas o externas de ofertas de trabajo. Analízala primero o añade las páginas manualmente: {{names}}.} other{{count} empresas no tienen páginas internas o externas de ofertas de trabajo. Analízalas primero o añade las páginas manualmente: {{names}}.}}"
+  }
+}

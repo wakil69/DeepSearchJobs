@@ -1,0 +1,24 @@
+{
+  "jobs": {
+    "jobStatusSuccess": "Jobstatus „{{status}}“ wurde erfolgreich gespeichert.",
+    "jobStatusError": "Serverfehler beim Speichern des Jobstatus.",
+    "jobsFetchFailed": "Serverfehler beim Abrufen der Jobs."
+  },
+  "companies": {
+    "companyUpdateSuccess": "Unternehmen „{{name}}“ wurde erfolgreich aktualisiert.",
+    "companyUpdateError": "Serverfehler beim Aktualisieren des Unternehmens.",
+    "companyNotFound": "Unternehmen nicht gefunden.",
+    "companiesDeleteSuccess": "{count, plural, one{{count} Unternehmen wurde erfolgreich gelöscht.} other{{count} Unternehmen wurden erfolgreich gelöscht.}}",
+    "companiesDeleteError": "Serverfehler beim Löschen der Unternehmen.",
+    "noIdsProvided": "Keine Unternehmens-IDs angegeben.",
+    "companiesFetchFailed": "Serverfehler beim Abrufen der Unternehmen.",
+    "companiesQueued": "{count, plural, one{{count} Unternehmensanalyse wurde erfolgreich in die Warteschlange gestellt.} other{{count} Unternehmensanalysen wurden erfolgreich in die Warteschlange gestellt.}}",
+    "jobsQueued": "{count, plural, one{{count} Jobanalyse wurde erfolgreich in die Warteschlange gestellt.} other{{count} Jobanalysen wurden erfolgreich in die Warteschlange gestellt.}}",
+    "queueError": "Fehler beim Hinzufügen zur Warteschlange.",
+    "noFileUploaded": "Keine Datei hochgeladen.",
+    "importSuccess": "{count, plural, one{{count} Unternehmen wurde erfolgreich importiert.} other{{count} Unternehmen wurden erfolgreich importiert.}}",
+    "importError": "Serverfehler beim Importieren der Unternehmen.",
+    "unsupportedFileType": "Nicht unterstützter Dateityp. Bitte eine CSV- oder XLSX-Datei verwenden.",
+    "noJobPagesFound": "{count, plural, one{{count} Unternehmen hat keine internen oder externen Jobseiten. Bitte zuerst analysieren oder Jobseiten manuell hinzufügen: {{names}}.} other{{count} Unternehmen haben keine internen oder externen Jobseiten. Bitte zuerst analysieren oder Jobseiten manuell hinzufügen: {{names}}.}}"
+  }
+}

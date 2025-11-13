@@ -1,0 +1,48 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon",
+    "build": "tsc"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@elastic/elasticsearch": "^8.19.1",
+    "@fastify/cookie": "^6.0.0",
+    "@fastify/cors": "^11.1.0",
+    "@fastify/multipart": "^9.3.0",
+    "@fastify/redis": "^7.1.0",
+    "@xenova/transformers": "^2.17.2",
+    "amqplib": "^0.10.9",
+    "dotenv": "^17.2.3",
+    "drizzle-kit": "^0.31.6",
+    "drizzle-orm": "^0.44.7",
+    "exceljs": "^4.4.0",
+    "fastify": "^5.6.1",
+    "fastify-plugin": "^5.1.0",
+    "fastify-qs": "^5.0.0",
+    "i18next": "^25.6.0",
+    "i18next-fs-backend": "^2.6.0",
+    "i18next-icu": "^2.4.1",
+    "papaparse": "^5.5.3",
+    "pg": "^8.16.3",
+    "postgres": "^3.4.7",
+    "qs": "^6.14.0"
+  },
+  "devDependencies": {
+    "@fastify/swagger": "^9.5.2",
+    "@fastify/swagger-ui": "^5.2.3",
+    "@types/amqplib": "^0.10.8",
+    "@types/node": "^24.10.0",
+    "@types/papaparse": "^5.5.0",
+    "@types/pg": "^8.15.6",
+    "nodemon": "^3.1.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

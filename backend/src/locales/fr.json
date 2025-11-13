@@ -1,0 +1,24 @@
+{
+  "jobs": {
+    "jobStatusSuccess": "Statut du poste « {{status}} » enregistré avec succès.",
+    "jobStatusError": "Erreur du serveur lors de l’enregistrement du statut du poste.",
+    "jobsFetchFailed": "Erreur du serveur lors de la récupération des postes."
+  },
+  "companies": {
+    "companyUpdateSuccess": "Entreprise « {{name}} » mise à jour avec succès.",
+    "companyUpdateError": "Erreur du serveur lors de la mise à jour de l’entreprise.",
+    "companyNotFound": "Entreprise introuvable.",
+    "companiesDeleteSuccess": "{count, plural, one{{count} société supprimée avec succès.} other{{count} sociétés supprimées avec succès.}}",
+    "companiesDeleteError": "Erreur du serveur lors de la suppression des entreprises.",
+    "noIdsProvided": "Aucun identifiant d’entreprise fourni.",
+    "companiesFetchFailed": "Erreur du serveur lors de la récupération des entreprises.",
+    "companiesQueued": "{count, plural, one{{count} analyse d’entreprise ajoutée à la file d’attente avec succès.} other{{count} analyses d’entreprises ajoutées à la file d’attente avec succès.}}",
+    "jobsQueued": "{count, plural, one{{count} tâche d’analyse d’entreprise ajoutée à la file d’attente avec succès.} other{{count} tâches d’analyse d’entreprise ajoutées à la file d’attente avec succès.}}",
+    "queueError": "Échec de l’ajout à la file d’attente.",
+    "noFileUploaded": "Aucun fichier téléchargé.",
+    "importSuccess": "{count, plural, one{{count} société importée.} other{{count} sociétés importées.}}",
+    "importError": "Erreur du serveur lors de l’importation des entreprises.",
+    "unsupportedFileType": "Type de fichier non pris en charge. Utilisez un fichier CSV ou XLSX.",
+    "noJobPagesFound": "{count, plural, one{{count} société ne possède pas de pages d’offres d’emploi internes ou externes. Veuillez d’abord l’analyser ou ajouter les pages d’offres manuellement : {{names}}.} other{{count} sociétés ne possèdent pas de pages d’offres d’emploi internes ou externes. Veuillez d’abord les analyser ou ajouter les pages d’offres manuellement : {{names}}.}}"
+  }
+}

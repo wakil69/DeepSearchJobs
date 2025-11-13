@@ -1,0 +1,24 @@
+{
+  "jobs": {
+    "jobStatusSuccess": "Lo stato del lavoro «{{status}}» è stato salvato con successo.",
+    "jobStatusError": "Errore del server durante il salvataggio dello stato del lavoro.",
+    "jobsFetchFailed": "Errore del server durante il recupero dei lavori."
+  },
+  "companies": {
+    "companyUpdateSuccess": "L’azienda «{{name}}» è stata aggiornata con successo.",
+    "companyUpdateError": "Errore del server durante l’aggiornamento dell’azienda.",
+    "companyNotFound": "Azienda non trovata.",
+    "companiesDeleteSuccess": "{count, plural, one{È stata eliminata {count} azienda con successo.} other{Sono state eliminate {count} aziende con successo.}}",
+    "companiesDeleteError": "Errore del server durante l’eliminazione delle aziende.",
+    "noIdsProvided": "Nessun ID azienda fornito.",
+    "companiesFetchFailed": "Errore del server durante il recupero delle aziende.",
+    "companiesQueued": "{count, plural, one{È stata aggiunta {count} analisi aziendale alla coda con successo.} other{Sono state aggiunte {count} analisi aziendali alla coda con successo.}}",
+    "jobsQueued": "{count, plural, one{È stato aggiunto {count} lavoro di analisi aziendale alla coda con successo.} other{Sono stati aggiunti {count} lavori di analisi aziendale alla coda con successo.}}",
+    "queueError": "Errore durante l’aggiunta alla coda.",
+    "noFileUploaded": "Nessun file caricato.",
+    "importSuccess": "{count, plural, one{È stata importata {count} azienda con successo.} other{Sono state importate {count} aziende con successo.}}",
+    "importError": "Errore del server durante l’importazione delle aziende.",
+    "unsupportedFileType": "Tipo di file non supportato. Usa un file CSV o XLSX.",
+    "noJobPagesFound": "{count, plural, one{{count} azienda non ha pagine di offerte di lavoro interne o esterne. Analizzala prima o aggiungi manualmente le pagine di lavoro: {{names}}.} other{{count} aziende non hanno pagine di offerte di lavoro interne o esterne. Analizzale prima o aggiungi manualmente le pagine di lavoro: {{names}}.}}"
+  }
+}

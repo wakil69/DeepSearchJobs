@@ -1,0 +1,33 @@
+# Node dependencies
+node_modules
+npm-debug.log
+yarn.lock
+pnpm-lock.yaml
+
+# Build output (will be re-created in container)
+dist
+
+# Local dev & editor files
+.DS_Store
+.vscode
+.idea
+*.log
+
+# Git & version control
+.git
+.gitignore
+
+# Environment files (handled manually)
+.env
+.env.local
+.env.development
+.env.test
+
+# Docker files
+Dockerfile
+.dockerignore
+
+# OS / temporary files
+*.swp
+*.bak
+*.tmp
