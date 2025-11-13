@@ -126,7 +126,7 @@ You're all set! DeepSearchJobs will be running locally!
 
 A full video tutorial is available here:
 
-👉 **[Watch the tutorial](INSERT_VIDEO_LINK_HERE)**
+👉 **[Watch the tutorial][https://youtu.be/t6BJGXQuImA]**
 
 ---
 
