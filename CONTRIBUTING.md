@@ -8,20 +8,6 @@ If you have any questions, feel free to contact us at:
 
 If you encounter any problem with the project, please **open an issue** on GitHub so we can address it quickly.
 
-Here is your updated Markdown including a new **“Current Architecture”** section:
-
----
-
-# Contributing to Play2Path & DeepSearchJobs
-
-Thank you for your interest in contributing to **Play2Path** and its module **DeepSearchJobs**!
-We truly appreciate your time, effort, and ideas to help us improve the platform.
-
-If you have any questions, feel free to contact us at:
-📧 **[abdelwakil.benabdi@play2path.com](mailto:abdelwakil.benabdi@play2path.com)**
-
-If you encounter any problem with the project, please **open an issue** on GitHub so we can address it quickly.
-
 ---
 
 # Current Architecture
