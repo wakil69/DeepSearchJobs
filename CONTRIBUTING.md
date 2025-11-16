@@ -15,59 +15,7 @@ If you encounter any problem with the project, please **open an issue** on GitHu
 DeepSearchJobs system is built as a distributed job-processing architecture composed of several services working together.
 Below is an overview of how the platform processes user requests and manages asynchronous jobs:
 
-```
-                         ┌──────────────────┐
-                         │    Frontend      │
-                         └─────────┬────────┘
-                                   │ API calls
-                                   ▼
-                         ┌──────────────────┐
-                         │     Backend      │
-                         └───────┬──────────┘
-                                 │
-                   creates jobs  │  updates job status (cache)
-                                 ▼
-                    ┌──────────────────┐
-                    │      Redis       │
-                    │ (status cache)   │
-                    └─────────┬────────┘
-                              │
-                              │ reads job status
-                              │
-                      ┌───────▼────────┐
-                      │   RabbitMQ     │
-                      │ (job queue)    │
-                      └───────┬────────┘
-                              │ dispatches jobs
-                ┌─────────────┴───────────────┐
-                ▼                               ▼
-     ┌──────────────────┐             ┌──────────────────┐
-     │ Worker: analyser │             │ Worker: checker  │
-     └───────┬──────────┘             └─────────┬────────┘
-             │ updates job status                 │ updates job status
-             │ via Redis                          │ via Redis
-             ▼                                     ▼
-        ┌──────────────────┐
-        │      Redis       │
-        └─────────┬────────┘
-                  │ final results written
-                  ▼
-        ┌───────────────────┐
-        │    PostgreSQL     │
-        │ (jobs database)   │
-        └─────────┬─────────┘
-                  │ change capture (Debezium)
-                  ▼
-        ┌──────────────────────────────┐
-        │     Kafka Connect / Kafka    │
-        └──────────────┬───────────────┘
-                       │ forwards job updates
-                       ▼
-              ┌────────────────────────┐
-              │     Elasticsearch      │
-              │ (search index store)   │
-              └────────────────────────┘
-```
+![Architecture Diagram](img/architecture_deepSearchJobs.png)
 
 This architecture enables:
 
