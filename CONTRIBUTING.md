@@ -21,7 +21,7 @@ This architecture enables:
 
 * **Asynchronous job execution** using RabbitMQ + Workers
 * **Real-time job status** via Redis
-* **Persistent job storage** in PostgreSQL
+* **Persistent job opportunities storage** in PostgreSQL
 * **Automatic search indexing** through Kafka Connect to Elasticsearch
 
 ---
@@ -38,6 +38,7 @@ To set up the project locally, please install the following dependencies first:
 * **Nodemon**
 * **npm**
 * **Docker**
+* **poetry**
 
 ### **1. Create your environment files**
 
