@@ -9,6 +9,9 @@
   <a href="https://www.play2path.com/">
     <img src="https://img.shields.io/badge/Visit-play2path.com-yellow" alt="Visit play2path.com"/>
   </a>
+  <a href="https://www.deepsearchjobs.com/">
+    <img src="https://img.shields.io/badge/Visit-deepsearchjobs.com-blue" albluet="Visit deepsearchjobs.com"/>
+  </a>
 </p>
 
 <p align="center">
