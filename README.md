@@ -25,7 +25,7 @@
 
 ## DeepSearchJobs
 
-**DeepSearchJobs** is a core module of the [Play2Path](https://www.play2path.com) ecosystem.  
+[DeepSearchJobs](https://www.deepsearchjobs.com) is a core module of the [Play2Path](https://www.play2path.com) ecosystem.  
 Its purpose is to **find and extract unique job opportunities** from sources that are often overlooked and **not available on major platforms** such as [LinkedIn](https://www.linkedin.com), [Indeed](https://www.indeed.com), [Glassdoor](https://www.glassdoor.com), [Monster](https://www.monster.com) etc.
 
 Unlike traditional job boards, DeepSearchJobs focuses on **hidden, high-value, niche, or hard-to-access opportunities**, offering users unique insights into the job market.
@@ -147,7 +147,7 @@ Here are some ideas currently on the roadmap:
   Better parallelism, smarter resource usage, and more scalable ingestion pipelines.
 
 * [ ] **Generate resumes tailored to each job offer**
-  Already available on **[Play2Path](https://www.play2path.com)** — the goal is to integrate this capability directly into the local module.
+  Already available on **[DeepSearchJobs](https://www.deepsearchjobs.com)** — the goal is to integrate this capability directly into the local module.
 
 * [ ] **Improve scraping speed**
   Through optimized concurrency, caching, batching requests, or smarter prioritization.
