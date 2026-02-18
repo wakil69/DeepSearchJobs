@@ -35,7 +35,7 @@ jobs:
       - name: Build and push base_worker
         uses: docker/build-push-action@v5
         with:
-          context: ./worker/base_worker
+          context: ./base_worker
           push: true
           tags: ${{ env.IMAGE_PREFIX }}/base_worker:${{ env.IMAGE_TAG }}
 
