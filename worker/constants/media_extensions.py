@@ -1,0 +1,14 @@
+MEDIA_EXTENSIONS = [
+    "*.wav",
+    "*.jpg",
+    "*.mp3",
+    "*.jpeg",
+    "*.gif",
+    "*.svg",
+    "*.ogg",
+    "*.webm",
+    "*.mp4",
+    "*.avi",
+    "*.flac",
+    "*.png"
+]

@@ -1,2 +1,2 @@
 cd base_worker
-docker build -t jobfetcher-base -f Dockerfile.worker .
+docker build -t deepsearchjobs-base .

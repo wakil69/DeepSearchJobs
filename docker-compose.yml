@@ -1,7 +1,7 @@
 services:
-  backend-play2path:
-    build: ./backend
-    container_name: backend-play2path
+  backend-deepsearchjobs:
+    image: ghcr.io/wakil69/deepsearchjobs/backend:latest
+    container_name: backend-deepsearchjobs
     restart: always
     env_file:
       - ./backend/.env.production
@@ -10,24 +10,24 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      postgres-play2path:
+      postgres-deepsearchjobs:
         condition: service_healthy
       elasticsearch:
         condition: service_started  
     networks:
-      - deep-search-jobs-network
+      - deepsearchjobs-network
 
-  frontend-play2path:
-    build: ./frontend
+  frontend-deepsearchjobs:
+    image: ghcr.io/wakil69/deepsearchjobs/frontend:latest
     restart: always
     env_file:
       - ./frontend/.env.production
     ports:
       - "3000:3000"
     depends_on:
-      - backend-play2path
+      - backend-deepsearchjobs
     networks:
-      - deep-search-jobs-network
+      - deepsearchjobs-network
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -43,9 +43,9 @@ services:
       timeout: 5s
       retries: 10
     volumes:
-      - rabbitmq_data_play2path:/var/lib/rabbitmq
+      - rabbitmq_data_deepsearchjobs:/var/lib/rabbitmq
     networks:
-      - deep-search-jobs-network
+      - deepsearchjobs-network
 
   redis:
     image: redis:8.2
@@ -53,54 +53,54 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis_data_play2path:/data
+      - redis_data_deepsearchjobs:/data
     networks:
-      - deep-search-jobs-network
+      - deepsearchjobs-network
 
   worker-analyser:
-    build: ./worker_async
+    image: ghcr.io/wakil69/deepsearchjobs/worker:latest
     depends_on:
       - rabbitmq
       - redis
-      - postgres-play2path
+      - postgres-deepsearchjobs
     env_file:
-      - ./worker_async/.env
+      - ./worker/.env
     environment:
       - WORKER_ID=analyser
       - NODE_ENV=production
     volumes:
       - ./logs:/app/logs
     networks:
-      - deep-search-jobs-network
+      - deepsearchjobs-network
 
   worker-checker:
-    build: ./worker_async
+    image: ghcr.io/wakil69/deepsearchjobs/worker:latest
     depends_on:
       - rabbitmq
       - redis
-      - postgres-play2path
+      - postgres-deepsearchjobs
     env_file:
-      - ./worker_async/.env
+      - ./worker/.env
     environment:
       - WORKER_ID=checker
       - NODE_ENV=production
     volumes:
       - ./logs:/app/logs
     networks:
-      - deep-search-jobs-network
+      - deepsearchjobs-network
 
-  postgres-play2path:
+  postgres-deepsearchjobs:
     image: postgres:16
     restart: always
-    container_name: postgres-play2path
+    container_name: postgres-deepsearchjobs
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin
-      POSTGRES_DB: play2path
+      POSTGRES_DB: deepsearchjobs
     ports:
       - "5433:5432"
     volumes:
-      - postgres_data_play2path:/var/lib/postgresql/data
+      - postgres_data_deepsearchjobs:/var/lib/postgresql/data
       - ./backend/db/connect/scripts/configure_postgres_configuration.sh:/scripts/configure_postgres_configuration.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U admin -d postgres"]
@@ -109,7 +109,7 @@ services:
       retries: 5
       start_period: 10s
     networks:
-      - deep-search-jobs-network
+      - deepsearchjobs-network
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.19.3
@@ -124,29 +124,29 @@ services:
       - xpack.security.transport.ssl.enabled=false
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
     volumes:
-      - esdata_play2path:/usr/share/elasticsearch/data
+      - esdata_deepsearchjobs:/usr/share/elasticsearch/data
     networks:
-      - deep-search-jobs-network
+      - deepsearchjobs-network
 
   # pgadmin:
   #   image: dpage/pgadmin4:8
   #   container_name: pgadmin
   #   restart: always
   #   depends_on:
-  #     - postgres-play2path
+  #     - postgres-deepsearchjobs
   #   environment:
   #     PGADMIN_DEFAULT_EMAIL: admin@admin.com
   #     PGADMIN_DEFAULT_PASSWORD: admin
   #   ports:
   #     - "5050:80"  # open pgAdmin at http://localhost:5050
   #   volumes:
-  #     - pgadmin_data_play2path:/var/lib/pgadmin
+  #     - pgadmin_data_deepsearchjobs:/var/lib/pgadmin
   #   networks:
-  #     - deep-search-jobs-network
+  #     - deepsearchjobs-network
 
   # kibana:
   #   image: docker.elastic.co/kibana/kibana:8.19.3
-  #   container_name: kibana-play2path
+  #   container_name: kibana-deepsearchjobs
   #   depends_on:
   #     - elasticsearch
   #   ports:
@@ -157,17 +157,17 @@ services:
   #     - ELASTICSEARCH_PASSWORD=admin
   #     - SERVER_NAME=kibana
   #   networks:
-  #     - deep-search-jobs-network
+  #     - deepsearchjobs-network
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.2.15
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
     depends_on:
-      - postgres-play2path
+      - postgres-deepsearchjobs
       - elasticsearch
     networks:
-      - deep-search-jobs-network
+      - deepsearchjobs-network
 
   kafka:
     image: confluentinc/cp-kafka:7.2.15
@@ -192,7 +192,7 @@ services:
       retries: 10
       start_period: 15s
     networks:
-      - deep-search-jobs-network
+      - deepsearchjobs-network
 
   connect:
     build: ./backend/db/connect/
@@ -223,17 +223,17 @@ services:
       - ./backend/db/connect/scripts:/scripts
       - ./backend/db/.env:/env/.env
     networks:
-      - deep-search-jobs-network
+      - deepsearchjobs-network
 
 
 volumes:
-  postgres_data_play2path:
-  pgadmin_data_play2path:
-  rabbitmq_data_play2path:
-  redis_data_play2path:
-  esdata_play2path:
+  postgres_data_deepsearchjobs:
+  pgadmin_data_deepsearchjobs:
+  rabbitmq_data_deepsearchjobs:
+  redis_data_deepsearchjobs:
+  esdata_deepsearchjobs:
 
 networks:
-  deep-search-jobs-network:
+  deepsearchjobs-network:
     driver: bridge
   

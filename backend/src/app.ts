@@ -22,8 +22,6 @@ const fastify: FastifyInstance = Fastify({
   logger: true,
 });
 
-console.log("Environment", process.env.NODE_ENV)
-
 const allowedOrigin =
   process.env.NODE_ENV === "production"
     ? "http://localhost:3000"

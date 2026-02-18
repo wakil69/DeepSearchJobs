@@ -46,8 +46,7 @@ From the provided `.env.example` file, you must create `.env` files in the follo
 
 ```
 /backend/db/.env
-/worker_async/.env
-/worker_sync/.env   (optional)
+/worker/.env
 ```
 
 ### **2. Start the development environment**

@@ -6,8 +6,7 @@ echo " Cleaning up old processes..."
 echo "======================================="
 
 # Kill old processes
-pkill -9 -f "python -m worker_async.main" || true
-pkill -9 -f "python -m worker_sync.main" || true
+pkill -9 -f "python -m worker.main" || true
 pkill -9 -f "playwright" || true
 pkill -9 -f "npm run dev" || true
 pkill -9 -f "concurrently" || true
@@ -190,8 +189,8 @@ docker compose -f "$COMPOSE_FILE" exec -T -e NODE_ENV=development "$CONNECT_CONT
 ###############################################
 # Start Frontend + Workers
 ###############################################
-NODE_ENV=development WORKER_ID=analyser python -m worker_async.main & \
-NODE_ENV=development WORKER_ID=checker python -m worker_async.main & \
+NODE_ENV=development WORKER_ID=analyser python -m worker.main & \
+# NODE_ENV=development WORKER_ID=check_jobs python -m worker.main & \
 npm run dev
 
 echo "======================================="

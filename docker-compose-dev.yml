@@ -14,7 +14,7 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - deep-search-jobs-dev-network
+      - deepsearchjobs-dev-network
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.19.3
@@ -31,11 +31,11 @@ services:
     volumes:
       - esdata:/usr/share/elasticsearch/data
     networks:
-      - deep-search-jobs-dev-network
+      - deepsearchjobs-dev-network
 
   # kibana:
   #   image: docker.elastic.co/kibana/kibana:8.19.3
-  #   container_name: kibana-play2path
+  #   container_name: kibana-deepsearchjobs
   #   depends_on:
   #     - elasticsearch
   #   ports:
@@ -46,7 +46,7 @@ services:
   #     - ELASTICSEARCH_PASSWORD=admin
   #     - SERVER_NAME=kibana
   #   networks:
-  #     - deep-search-jobs-dev-network
+  #     - deepsearchjobs-dev-network
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.2.15
@@ -54,7 +54,7 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
     networks:
-      - deep-search-jobs-dev-network
+      - deepsearchjobs-dev-network
 
   kafka:
     image: confluentinc/cp-kafka:7.2.15
@@ -80,7 +80,7 @@ services:
       retries: 10
       start_period: 15s
     networks:
-      - deep-search-jobs-dev-network
+      - deepsearchjobs-dev-network
 
   connect:
     build: ./backend/db/connect/
@@ -112,13 +112,13 @@ services:
       - ./backend/db/connect/scripts:/scripts
       - ./backend/db/.env:/env/.env
     networks:
-      - deep-search-jobs-dev-network
+      - deepsearchjobs-dev-network
       
 volumes:
   esdata:
 
 networks:
-  deep-search-jobs-dev-network:
+  deepsearchjobs-dev-network:
     driver: bridge
     ipam:
       config:
