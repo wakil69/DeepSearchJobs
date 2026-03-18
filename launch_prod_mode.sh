@@ -31,7 +31,7 @@ PG_HOST=localhost
 PG_PORT=5433
 PG_USER=admin
 PG_PASSWORD=admin
-PG_DB=play2path
+PG_DB=deepsearchjobs
 
 # Ensure database exists
 echo "Checking if database '$PG_DB' exists on $PG_HOST:$PG_PORT..."

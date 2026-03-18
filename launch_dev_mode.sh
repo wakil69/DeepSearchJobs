@@ -85,7 +85,7 @@ echo "NODE_ENV set to $NODE_ENV"
 
 # Configuration paths
 COMPOSE_FILE="docker-compose-dev.yml"
-CONNECT_CONTAINER="connect"
+CONNECT_CONTAINER="connect-dev"
 CONNECT_SCRIPT_PATH="/scripts/set_connectors.sh"
 CONFIGURE_DB_SCRIPT="./backend/db/connect/scripts/configure_postgres_configuration_dev.sh"
 DB_DIR="./backend/db/drizzle"
@@ -107,7 +107,7 @@ fi
 
 # Database connection info
 PG_HOST="${PG_HOST_DEV}"
-PG_PORT="${PG_PORT}"
+PG_PORT="${PG_PORT_DEV}"
 PG_USER="${PG_USER_DEV}"
 PG_PASSWORD="${PG_PASSWORD_DEV}"
 PG_DB="${PG_DATABASE_DEV}"
@@ -120,19 +120,30 @@ docker compose -f "$COMPOSE_FILE" down
 docker compose -f "$COMPOSE_FILE" up -d --build
 
 ###############################################
+# Wait for PostgreSQL container to be ready
+###############################################
+echo "Waiting for PostgreSQL container to be ready..."
+until docker exec postgres-deepsearchjobs-dev pg_isready -U "$PG_USER" -d postgres > /dev/null 2>&1; do
+  sleep 2
+  echo "Still waiting for postgres-deepsearchjobs-dev..."
+done
+echo "PostgreSQL is ready."
+
+
+###############################################
 # Ensure DB Exists
 ###############################################
-echo "Checking if database '$PG_DB' exists on $PG_HOST:$PG_PORT..."
-DB_EXISTS=$(PGPASSWORD="$PG_PASSWORD" psql -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$PG_DB';" || echo "error")
+echo "Checking if database '$PG_DB' exists in postgres-deepsearchjobs-dev..."
+DB_EXISTS=$(docker exec postgres-deepsearchjobs-dev psql -U "$PG_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$PG_DB';" || echo "error")
 
 if [[ "$DB_EXISTS" == "1" ]]; then
   echo "Database '$PG_DB' already exists."
 elif [[ "$DB_EXISTS" == "error" ]]; then
-  echo "Could not connect to PostgreSQL at $PG_HOST:$PG_PORT. Please check credentials."
+  echo "Could not query PostgreSQL in postgres-deepsearchjobs-dev. Please check the container."
   exit 1
 else
   echo "Creating database '$PG_DB'..."
-  PGPASSWORD="$PG_PASSWORD" psql -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -d postgres -c "CREATE DATABASE \"$PG_DB\";"
+  docker exec postgres-deepsearchjobs-dev psql -U "$PG_USER" -d postgres -c "CREATE DATABASE \"$PG_DB\";"
   echo "Database '$PG_DB' created successfully."
 fi
 
@@ -155,13 +166,17 @@ fi
 ###############################################
 # PostgreSQL Debezium Configuration
 ###############################################
-if [ -f "$CONFIGURE_DB_SCRIPT" ]; then
-  echo "Configuring PostgreSQL for Debezium..."
-  bash "$CONFIGURE_DB_SCRIPT"
-else
-  echo "ERROR: Database configuration script not found at $CONFIGURE_DB_SCRIPT"
-  exit 1
-fi
+echo "Configuring PostgreSQL for Debezium..."
+
+docker exec -i postgres-deepsearchjobs-dev bash -c "
+  if [ -f '/scripts/configure_postgres_configuration.sh' ]; then
+    echo 'Running /scripts/configure_postgres_configuration.sh...'
+    bash /scripts/configure_postgres_configuration.sh
+  else
+    echo 'ERROR: Script not found at /scripts/configure_postgres_configuration.sh inside container.'
+    exit 1
+  fi
+"
 
 ###############################################
 # Activate Python Virtual Env
@@ -186,15 +201,15 @@ echo "Installing Playwright dependencies..."
 # Connectors Setup
 ###############################################
 echo "Running connector setup inside '$CONNECT_CONTAINER'..."
-docker compose -f "$COMPOSE_FILE" exec -T -e NODE_ENV=development "$CONNECT_CONTAINER" bash "$CONNECT_SCRIPT_PATH"
+docker exec -i -e NODE_ENV=development "$CONNECT_CONTAINER" bash "$CONNECT_SCRIPT_PATH"
 
 
 ###############################################
 # Start Frontend + Workers
 ###############################################
-# NODE_ENV=development WORKER_ID=analyser "$PYTHON_PATH" -m worker.main & \
+NODE_ENV=development WORKER_ID=analyser "$PYTHON_PATH" -m worker.main & \
 # NODE_ENV=development WORKER_ID=check_jobs "$PYTHON_PATH" -m worker.main & \
-# npm run dev
+npm run dev
 
 echo "======================================="
 echo " Development environment is ready!"

@@ -1,6 +1,7 @@
 services:
   backend-deepsearchjobs:
-    image: ghcr.io/wakil69/deepsearchjobs/backend:latest
+    # image: ghcr.io/wakil69/deepsearchjobs/backend:latest
+    build: ./backend
     container_name: backend-deepsearchjobs
     restart: always
     env_file:
@@ -19,7 +20,8 @@ services:
       - deepsearchjobs-network
 
   frontend-deepsearchjobs:
-    image: ghcr.io/wakil69/deepsearchjobs/frontend:latest
+    # image: ghcr.io/wakil69/deepsearchjobs/frontend:latest
+    build: ./frontend
     restart: always
     env_file:
       - ./frontend/.env.production
@@ -59,7 +61,8 @@ services:
       - deepsearchjobs-network
 
   worker-analyser:
-    image: ghcr.io/wakil69/deepsearchjobs/worker:latest
+    # image: ghcr.io/wakil69/deepsearchjobs/worker:latest
+    build: ./worker
     depends_on:
       - rabbitmq
       - redis
@@ -75,7 +78,8 @@ services:
       - deepsearchjobs-network
 
   worker-checker:
-    image: ghcr.io/wakil69/deepsearchjobs/worker:latest
+    # image: ghcr.io/wakil69/deepsearchjobs/worker:latest
+    build: ./worker
     depends_on:
       - rabbitmq
       - redis
@@ -142,6 +146,7 @@ services:
   #     - "5050:80"  # open pgAdmin at http://localhost:5050
   #   volumes:
   #     - pgadmin_data_deepsearchjobs:/var/lib/pgadmin
+  #     - ./pgadmin/servers.prod.json:/pgadmin4/servers.json
   #   networks:
   #     - deepsearchjobs-network
 

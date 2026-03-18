@@ -26,15 +26,15 @@ else
 fi
 
 if [[ "$NODE_ENV" == "development" ]]; then
-  PG_HOST="${PG_HOST_DEV}"
+  PG_HOST="${PG_HOST}"
   PG_DB="${PG_DATABASE_DEV}"
   PG_USER="${DEBEZIUM_USER}"
-  PG_PASS="${PG_PASSWORD_DEV}"
+  PG_PASS="${DEBEZIUM_PWD}"
 else
   PG_HOST="${PG_HOST}"
   PG_DB="${PG_DATABASE}"
   PG_USER="${DEBEZIUM_USER}"
-  PG_PASS="${PG_PASSWORD}"
+  PG_PASS="${DEBEZIUM_PWD}"
 fi
 
 PG_PORT="${PG_PORT}"
@@ -114,7 +114,7 @@ if echo "$AVAILABLE_PLUGINS" | grep -q "io.debezium.connector.postgresql.Postgre
     \"database.password\": \"$PG_PASS\",
     \"database.dbname\": \"$PG_DB\",
     \"plugin.name\": \"pgoutput\",
-    \"slot.name\": \"debezium_slot_play2path\",
+    \"slot.name\": \"debezium_slot_deepsearchjobs\",
     \"publication.name\": \"debezium_publication\",
     \"publication.autocreate.mode\": \"disabled\",
     \"table.include.list\": \"public.all_jobs,public.companies\",

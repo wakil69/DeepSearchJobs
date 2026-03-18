@@ -211,6 +211,7 @@ export async function jobsRoutes(fastify: FastifyInstance) {
           pageSize,
         });
       } catch (error: any) {
+        console.log(error, error?.meta?.body?.error)
         // Index not yet created (no jobs scraped yet) — return empty result
         if (error?.meta?.body?.error?.type === "index_not_found_exception") {
           return reply.status(200).send({ jobs: [], total: 0, page, pageSize });

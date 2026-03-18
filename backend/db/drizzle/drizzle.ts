@@ -14,7 +14,7 @@ const isDev = process.env.NODE_ENV === "development";
 
 const pool = new Pool({
   host: isDev ? process.env.PG_HOST_DEV : process.env.PG_HOST,
-  port: Number(process.env.PG_PORT),
+  port: Number(isDev ? process.env.PG_PORT_DEV : process.env.PG_PORT),
   user: isDev ? process.env.PG_USER_DEV : process.env.PG_USER,
   password: isDev ? process.env.PG_PASSWORD_DEV : process.env.PG_PASSWORD,
   database: isDev ? process.env.PG_DATABASE_DEV : process.env.PG_DATABASE,

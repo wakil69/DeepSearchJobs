@@ -9,10 +9,10 @@ const isDev = process.env.NODE_ENV === "development";
 
 const dbCredentials = {
   host: (isDev ? process.env.PG_HOST_DEV : process.env.PG_HOST) || "localhost",
-  port: Number(process.env.PG_PORT || 5432),
+  port: Number((isDev ? process.env.PG_PORT_DEV : process.env.PG_PORT) || 5432),
   user: (isDev ? process.env.PG_USER_DEV : process.env.PG_USER) || "admin",
   password: (isDev ? process.env.PG_PASSWORD_DEV : process.env.PG_PASSWORD) || "admin",
-  database: (isDev ? process.env.PG_DATABASE_DEV : process.env.PG_DATABASE) || "play2path",
+  database: (isDev ? process.env.PG_DATABASE_DEV : process.env.PG_DATABASE) || "deepsearchjobs",
   ssl: false,
 };
 

@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "deepsearchjobs",
+      "Group": "Servers",
+      "Host": "postgres-deepsearchjobs",
+      "Port": 5432,
+      "MaintenanceDB": "deepsearchjobs",
+      "Username": "admin",
+      "SSLMode": "prefer"
+    }
+  }
+}

@@ -31,7 +31,7 @@ HOST_DB = os.getenv(f"PG_HOST_{PREFIX_ENV}", os.getenv("PG_HOST", "localhost"))
 USERNAME = os.getenv(f"PG_USER_{PREFIX_ENV}", os.getenv("PG_USER", "user"))
 PASSWORD = os.getenv(f"PG_PASSWORD_{PREFIX_ENV}", os.getenv("PG_PASSWORD", "password"))
 DATABASE = os.getenv(f"PG_DATABASE_{PREFIX_ENV}", os.getenv("PG_DATABASE", "database"))
-PORT = int(os.getenv("PG_PORT", 5432))
+PORT = int(os.getenv(f"PG_PORT_{PREFIX_ENV}", os.getenv("PG_PORT", 5432)))
 
 DATABASE_URL = (
     f"host={HOST_DB} "
@@ -56,6 +56,7 @@ async def init_postgres_pool() -> None:
         max_lifetime=180,
         max_idle=60,
         reconnect_timeout=5,
+        open=False,
     )
     await _pool.open()
 
@@ -84,7 +85,7 @@ redis_client = Redis(
 
 # RabbitMQ 
 
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
+RABBITMQ_HOST = os.getenv(f"RABBITMQ_HOST_{PREFIX_ENV}", os.getenv("RABBITMQ_HOST", "rabbitmq"))
 RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", "5672")
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "guest")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "guest")

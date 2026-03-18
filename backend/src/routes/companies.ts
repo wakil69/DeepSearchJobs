@@ -215,7 +215,6 @@ export async function companiesRoutes(fastify: FastifyInstance) {
         },
       },
     },
-
     handler: async (request, reply) => {
       const {
         page = 1,
