@@ -140,6 +140,9 @@ Here are some ideas currently on the roadmap:
 
 * [ ] **Better code refactoring**
 
+* [ ] **Faster "job still open" check**
+  Speed up availability detection by leveraging the `hash_job_description_page` column in the `all_jobs` table — use Hamming distance comparisons on page content hashes to efficiently determine whether a job listing is still active.
+
 * [ ] **Improve data reliability**
   Enhance validation, detection of broken sources, deduplication logic, and consistency across ingested data.
 
