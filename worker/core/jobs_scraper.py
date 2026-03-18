@@ -1,7 +1,7 @@
 import random
 
 from bs4 import BeautifulSoup
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError, Browser
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError, Browser, Page
 from typing import List, cast, Tuple, Optional
 from worker.types.worker_types import (
     Job,
@@ -17,9 +17,16 @@ from worker.core.show_more_button_detector import ShowMoreButtonDetector
 from worker.core.pagination_detector.pagination_detector import PaginationDetector
 from worker.core.post_process_jobs.post_process_jobs import PostProcessingJobs
 from worker.dependencies import llm_client, LLM_MODEL, WORKER_ID
-from worker.core.db_ops import DBOps 
+from worker.core.db_ops import DBOps
 from worker.utils.url_utils import normalize_url
-from worker.utils.text_utils import extract_structured_text_chunks, extract_structured_text, hash_page_content
+from worker.utils.text_utils import (
+    extract_structured_text_chunks,
+    extract_structured_text,
+    hash_page_content,
+)
+from worker.core.page_processing.page_processing import PageProcessing
+from worker.core.lazy_loading_detector import LazyLoadingPageDetector
+from worker.core.pagination_detector.pagination_detector import PaginationDetector
 
 
 class EmailJobsScraper(BaseScraper):
@@ -32,6 +39,7 @@ class EmailJobsScraper(BaseScraper):
         browser: Browser,
         timeout=20000,
     ):
+        """Initialize the scraper with crawl results, company details, and all sub-component instances."""
         super().__init__(company_id, company_name, session_logger, browser)
         self.website = crawl_results.get("website")
         self.internal_job_listing_pages = crawl_results.get(
@@ -49,10 +57,39 @@ class EmailJobsScraper(BaseScraper):
         self.company_description: Optional[str] = None
         self.timeout = timeout
 
-        self.db_ops = DBOps(session_logger)
+        self.db_ops = DBOps(session_logger=self.session_logger)
+
+        self.page_processing = PageProcessing(session_logger=self.session_logger)
+        
+        self.show_more_button_detector = ShowMoreButtonDetector(
+            session_logger=self.session_logger
+        )
+
+        self.page_processing = PageProcessing(session_logger=self.session_logger)
+
+        self.lazy_loading_detector = LazyLoadingPageDetector(
+            session_logger=self.session_logger,
+        )
+
+        self.pagination_detector = PaginationDetector(
+            session_logger=self.session_logger,
+            containers_pagination_html=self.containers_pagination_html,
+        )
+
+        self.post_processor_jobs = PostProcessingJobs(
+            session_logger=self.session_logger,
+            emails=self.emails,
+            company_name=self.company_name,
+            company_id=self.company_id,
+            job_offers=self.job_offers,
+            old_job_offers=self.old_job_offers,
+            new_job_offers=self.new_job_offers,
+            company_description=self.company_description,
+            current_job_offers=self.current_job_offers,
+        )
 
     async def process_page_job_listing_without_pagination(
-        self, url: str, retries=1
+        self, page: Page, url: str, retries=1
     ) -> None:
         """
         Extracts job listings from a single-page career site or a page using
@@ -69,14 +106,14 @@ class EmailJobsScraper(BaseScraper):
 
         show_more_button = (
             await self.show_more_button_detector.check_if_show_more_pagination_button(
-                url
+                page, url
             )
         )
 
         if show_more_button:
 
             await self.show_more_button_detector.process_page_with_show_more_button(
-                url, show_more_button
+                page, url, show_more_button
             )
 
         attempt = 0
@@ -85,18 +122,14 @@ class EmailJobsScraper(BaseScraper):
         while attempt <= retries:
             try:
 
-                assert self.page is not None, "Page not initialized"
 
-                html_content = await self.page.content()
-                soup = BeautifulSoup(html_content, "html.parser")
+                _, soup = await self.page_processing.return_soup(page)
 
-                for tag in soup(["script", "style", "meta", "noscript", "svg"]):
-                    tag.decompose()
-
-                text_chunks = extract_structured_text_chunks(soup, url, self.job_offers)
+                text_chunks = extract_structured_text_chunks(self.job_offers, soup, url)
 
                 if text_chunks:
                     break
+
 
             except PlaywrightTimeoutError as e:
                 self.session_logger.warning(
@@ -111,10 +144,12 @@ class EmailJobsScraper(BaseScraper):
             attempt += 1
 
             if attempt <= retries:
+                
                 self.session_logger.info(
                     f"Restarting browser (attempt {attempt}/{retries}) and retrying..."
                 )
-                await self.restart_context()
+                
+                # await self.restart_context()
 
             else:
                 self.session_logger.error(
@@ -147,19 +182,19 @@ class EmailJobsScraper(BaseScraper):
                 pydantic_model=JobsResponse,
             )
 
+            if result_structured is None:
+                self.session_logger.info("LLM returned no structured result")
+                continue
+
             try:
-                validated = JobsResponse.model_validate(result_structured)
-                self.session_logger.info(
-                    f"Found {len(validated.jobs)} job(s) in chunk {i}: {validated.jobs}"
-                )
                 all_jobs.extend(
-                    cast(List[Job], [job.model_dump() for job in validated.jobs])
+                    cast(
+                        List[Job], [job.model_dump() for job in result_structured.jobs]
+                    )
                 )
 
             except Exception as e:
-                self.session_logger.error(
-                    f"Validation failed for {result_structured}: {e}"
-                )
+                self.session_logger.error(f"Validation failed for {result_structured}: {e}")
                 continue
 
         if len(all_jobs) == 0 and WORKER_ID == "analyser":
@@ -196,7 +231,13 @@ class EmailJobsScraper(BaseScraper):
         return
 
     async def process_page_job_listing_with_pagination(
-        self, url: str, base_url: str, dynamic_pagination=False, retries=1
+        self,
+        page: Page,
+        url: str,
+        base_url: str,
+        dynamic_pagination=False,
+        max_pages=500,
+        retries=1,
     ) -> None:
         """
         Crawl job listings from a page with pagination (standard or dynamic 'click more').
@@ -207,7 +248,31 @@ class EmailJobsScraper(BaseScraper):
             dynamic_pagination: Whether pagination is JavaScript-based.
             retries: Number of retry attempts for Playwright timeouts.
         """
-        if url in self.visited_pages and dynamic_pagination == False:
+
+        self.session_logger.info(
+            "Processing page | url=%s | base_url=%s | dynamic_pagination=%s | retries=%s",
+            url,
+            base_url,
+            dynamic_pagination,
+            retries,
+        )
+
+        if url in self.visited_pages and dynamic_pagination is False:
+            self.session_logger.info("Skipping already visited page: %s", url)
+            return
+
+        if (
+            len(self.visited_pages) >= max_pages
+            or len(self.visited_hashes) >= max_pages
+        ):
+
+            self.session_logger.warning(
+                "Max pages reached | visited_pages=%s | visited_hashes=%s | MAX_PAGES=%s",
+                len(self.visited_pages),
+                len(self.visited_hashes),
+                max_pages,
+            )
+
             return
 
         self.visited_pages.add(url)
@@ -220,23 +285,22 @@ class EmailJobsScraper(BaseScraper):
         for attempt in range(retries + 1):
             try:
 
-                assert self.page is not None, "Page not initialized"
-
                 if not dynamic_pagination:
-                    await self.page.goto(url, timeout=self.timeout, wait_until="load")
 
-                await self.page.wait_for_timeout(random.uniform(1000, 3000))
+                    await self.page_processing.go_to_page(page, url)
 
-                await self.page.evaluate(
+                await page.wait_for_timeout(random.uniform(2000, 5000))
+
+                await page.evaluate(
                     "window.scrollTo(0, document.body.scrollHeight)"
                 )
 
-                html_content = await self.page.content()
-                soup = BeautifulSoup(html_content, "html.parser")
+                _, soup = await self.page_processing.return_soup(page)
 
-                # Clean soup for text extraction
-                for tag in soup(["script", "style", "meta", "noscript", "svg"]):
-                    tag.decompose()
+                text_content = soup.get_text(separator="\n", strip=True)
+
+                if not text_content:
+                    continue
 
                 text_content = extract_structured_text(soup, url, self.job_offers)
 
@@ -252,20 +316,27 @@ class EmailJobsScraper(BaseScraper):
                 # Extract pagination buttons
                 pagination_data = (
                     await self.pagination_detector.extract_pagination_buttons(
-                        soup, base_url
+                        page, soup, base_url
                     )
                 )
 
-                pagination_buttons = pagination_data.get("pagination_buttons", [])
+                pagination_buttons = pagination_data.get("selectors", [])
 
                 # Prevent revisiting pages with same pagination layout
                 if not dynamic_pagination:
-                    fingerprint = tuple(sorted(pagination_buttons))
+                    fingerprint = tuple(
+                        sorted(
+                            (btn["type"], btn["value"]) for btn in pagination_buttons
+                        )
+                    )
+
+                    # Prevent revisiting pages with same pagination layout
                     if fingerprint in self.visited_buttons:
                         self.session_logger.info(
                             f"Skipping {url} (duplicate pagination buttons)."
                         )
                         return
+
                     self.visited_buttons.add(fingerprint)
 
                 break
@@ -276,7 +347,7 @@ class EmailJobsScraper(BaseScraper):
                 )
                 if attempt < retries:
                     self.session_logger.info("Restarting browser and retrying...")
-                    await self.restart_context()
+                    # await self.restart_context()
                     continue
                 self.session_logger.error("Retry limit reached. Skipping page.")
                 return
@@ -304,15 +375,22 @@ class EmailJobsScraper(BaseScraper):
             pydantic_model=JobsResponse,
         )
 
-        try:
-            validated = JobsResponse.model_validate(result_structured)
-            job_data: list[Job] = cast(
-                list[Job], [job.model_dump() for job in validated.jobs]
-            )
-            self.session_logger.info(f"Found {len(job_data)} job(s): {job_data}")
-        except Exception as e:
-            self.session_logger.error(f"Validation failed for {result_structured}: {e}")
+        if result_structured is None:
+            self.session_logger.info("LLM returned no structured result")
             return
+
+        try:
+            job_data: List[Job] = cast(
+                List[Job],
+                [job.model_dump() for job in result_structured.jobs],
+            )
+
+            self.session_logger.info(f"Found {len(job_data)} job(s): {job_data}")
+
+        except Exception as e:
+            self.session_logger.error(f"Processing failed for {result_structured}: {e}")
+            return
+
 
         existing_jobs = {
             (
@@ -360,29 +438,37 @@ class EmailJobsScraper(BaseScraper):
 
         self.session_logger.info(f"Total job offers: {len(self.job_offers)}")
 
-        for button_xpath in pagination_buttons:
+        for button in pagination_buttons:
+
             try:
-                if "[@href=" in button_xpath:
-                    
+
+                if "[@href=" in button.get("value", ""):
+
                     new_url = await self.pagination_detector.handle_standard_pagination(
-                        button_xpath, url, base_url
+                        page, button, url, base_url
                     )
-                    
+
                     if new_url:
-                    
-                        await self.process_page_job_listing_with_pagination(new_url, base_url, False)
+
+                        await self.process_page_job_listing_with_pagination(
+                            page, new_url, base_url, False
+                        )
 
                 else:
-                    
-                    await self.pagination_detector.handle_dynamic_pagination(
-                        button_xpath, url, base_url
+
+                    new_url = await self.pagination_detector.handle_dynamic_pagination(
+                        page, button
                     )
-                    
-                    await self.process_page_job_listing_with_pagination(url, base_url, True)
+
+                    if new_url:
+
+                        await self.process_page_job_listing_with_pagination(
+                            page, new_url, base_url, True
+                        )
 
             except Exception as e:
                 self.session_logger.warning(
-                    f"Error handling pagination button {button_xpath}: {type(e).__name__}: {e}"
+                    f"Error handling pagination button {button}: {type(e).__name__}: {e}"
                 )
 
         return
@@ -391,49 +477,79 @@ class EmailJobsScraper(BaseScraper):
         """Extracts job listings from identified job pages and follows pagination."""
         self.visited_pages: set[str] = set()
         self.visited_hashes: set[str] = set()
-        self.visited_buttons: set[Tuple[str, ...]] = set()
+        self.visited_buttons: set[tuple] = set()
 
         self.session_logger.info(f"Final job pages about to process: {job_pages}")
+        
+        max_attempts = 2
 
         for i, job_page in enumerate(job_pages, 1):
 
             self.session_logger.info(f"Processing URL {i}/{len(job_pages)}: {job_page}")
 
             base_url = job_page
+            attempt = 0
 
-            try:
+            while attempt < max_attempts:
 
-                self.session_logger.info(f"Checking pagination from: {job_page}")
+                attempt += 1
 
-                pagination_buttons = (
-                    await self.pagination_detector.check_if_pagination_buttons(job_page)
-                )
+                page = await self.create_page()
 
-                if pagination_buttons:
-
+                try:
                     self.session_logger.info(
-                        f"Pagination in this page: {pagination_buttons}"
+                        f"Checking pagination from: {job_page} (attempt {attempt}/{max_attempts})"
                     )
 
-                    await self.process_page_job_listing_with_pagination(
-                        job_page, base_url
+                    pagination_buttons_full = (
+                        await self.pagination_detector.check_if_pagination_buttons(
+                            page, job_page
+                        )
                     )
 
-                    self.visited_buttons = set()
+                    pagination_buttons = pagination_buttons_full.get("selectors", [])
 
-                else:
+                    if pagination_buttons:
 
-                    self.session_logger.info(
-                        f"No pagination in this page: {pagination_buttons}"
+                        self.session_logger.info(
+                            f"Pagination in this page: {pagination_buttons}"
+                        )
+
+                        await self.process_page_job_listing_with_pagination(
+                            page, job_page, base_url
+                        )
+
+                        self.visited_buttons = set()
+
+                    else:
+
+                        self.session_logger.info(
+                            f"No pagination in this page: {pagination_buttons}"
+                        )
+
+                        await self.process_page_job_listing_without_pagination(
+                            page, job_page
+                        )
+
+                    break
+
+                except Exception as e:
+
+                    self.session_logger.error(
+                        f"Error processing {job_page} (attempt {attempt}/{max_attempts}): {e}",
+                        exc_info=True,
                     )
 
-                    await self.process_page_job_listing_without_pagination(job_page)
+                    await self.restart_context()
 
-            except Exception as e:
-                self.session_logger.error(
-                    f"Error processing {job_page}: {e}", exc_info=True
-                )
-                continue
+                    if attempt >= max_attempts:
+                        self.session_logger.error(
+                            f"Failed processing {job_page} after {max_attempts} attempts"
+                        )
+
+                finally:
+
+                    await page.close()
 
         return
 
@@ -444,40 +560,21 @@ class EmailJobsScraper(BaseScraper):
 
         await self.create_context_with_proxy()
 
-        shared_deps = {
-            "logger": self.session_logger,
-            "get_page": self.get_page,
-            "restart_context": self.restart_context,
-        }
-
-        self.show_more_button_detector = ShowMoreButtonDetector(
-            **shared_deps,
-        )
-
-        self.pagination_detector = PaginationDetector(
-            **shared_deps,
-            containers_pagination_html=self.containers_pagination_html,
-        )
-
-        self.post_processor_jobs = PostProcessingJobs(
-            **shared_deps,
-            emails=self.emails,
-            company_name=self.company_name,
-            company_id=self.company_id,
-            job_offers=self.job_offers,
-            old_job_offers=self.old_job_offers,
-            new_job_offers=self.new_job_offers,
-            company_description=self.company_description,
-            current_job_offers=self.current_job_offers,
-        )
-
         job_listing_pages_to_process = (
             self.internal_job_listing_pages + self.external_job_listing_pages
         )
 
         await self.extract_job_listings(job_listing_pages_to_process)
 
-        await self.post_processor_jobs.post_process()
+        page = await self.create_page()
+
+        try:
+
+            await self.post_processor_jobs.post_process(page)
+
+        finally:
+
+            await page.close()
 
         self.company_description = self.post_processor_jobs.company_description
 

@@ -77,6 +77,7 @@ class Job(TypedDict):
     contract_type: NotRequired[Optional[str]]
     salary: NotRequired[Optional[str]]
     job_title_vector: NotRequired[Optional[List[float]]]  # 1D embedding vector
+    hash_job_description_page: Optional[int]
         
 class ContainerIdentifier(BaseModel):
     """XPath expression identifying the pagination container, or None if not applicable."""
@@ -119,8 +120,14 @@ class JobsResponse(BaseModel):
     """Validates that the input contains a list of JobLLMExtracted under the 'jobs' key."""
     jobs: List[JobLLMExtracted]
 
-PaginationButtons = Dict[str, List[str]] # Example: {"pagination_buttons": ["//button[@id='page_1']", "//a[text()='Next']"]}
-
+class PaginationSelector(TypedDict):
+    type: Literal["xpath", "playwright"]
+    value: str
+    
+class PaginationButtons(TypedDict):
+    selectors: List[PaginationSelector]
+    is_shadow_dom: bool
+    
 class CompanyDescriptionResponse(BaseModel):
     """Represents the extracted company description, or None if unavailable."""
     company_description: Optional[str] = None

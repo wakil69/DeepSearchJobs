@@ -14,18 +14,18 @@ from urllib.parse import urlparse
 from playwright.async_api import Page
 from worker.dependencies import llm_client, LLM_MODEL
 from worker.utils.text_utils import hash_page_content, extract_visible_text
+from worker.utils.xpath_utils import find_first_existing_xpath
+from worker.core.page_processing.page_processing import PageProcessing
 
 class ShowMoreButtonDetector:
-    def __init__(self,
-        session_logger: Any,
-        get_page: Callable[[], Page],
-        restart_context: Callable,
-        timeout: int = 30000
-    ):
-        self.get_page = get_page
-        self.timeout = timeout
-        self.restart_context = restart_context
+    def __init__(self, session_logger: Any, timeout: int = 20000):
+        """Initialize ShowMoreButtonDetector with a session logger and Playwright timeout."""
         self.session_logger = session_logger
+        self.timeout = timeout
+
+        self.page_processing = PageProcessing(
+            session_logger=session_logger,
+        )
 
     @staticmethod
     def extract_all_text_with_xpath(
@@ -74,7 +74,7 @@ class ShowMoreButtonDetector:
         return texts, mapping
 
     async def extract_show_more_button(
-        self, soup: BeautifulSoup, url: str
+        self, page: Page, soup: BeautifulSoup, url: str
     ) -> Optional[Tuple[str, str]]:
         """
         Uses an LLM to identify a 'Show More' (load more) button on the given page.
@@ -85,7 +85,11 @@ class ShowMoreButtonDetector:
         """
         try:
             texts, mapping = self.extract_all_text_with_xpath(soup)
-            page_text = "\n".join(texts)[-120000:]
+            n = len(texts)
+            if n < 50:
+                page_text = "\n".join(texts)
+            else:
+                page_text = "\n".join(texts[n // 2 :])
 
             messages = [
                 {
@@ -129,13 +133,9 @@ class ShowMoreButtonDetector:
                 self.session_logger.warning(f"No XPath mapping found for text '{button_text}'")
                 return None
 
-            for xpath in candidate_xpaths:
-                page = self.get_page()
-                locator = page.locator(f"xpath={xpath}").first
-                if await locator.count() > 0:
-                    self.session_logger.info(
-                        f"Found 'show more' button: text='{button_text}', xpath={xpath}"
-                    )
+            xpath = find_first_existing_xpath(soup, candidate_xpaths)
+
+            if xpath:
                 return xpath, button_text
 
             self.session_logger.warning(
@@ -149,7 +149,7 @@ class ShowMoreButtonDetector:
             return None
 
     async def check_if_show_more_pagination_button(
-        self, url: str, retries=1
+        self, page: Page, url: str, retries=1
     ) -> Optional[Tuple[str, str]]:
         """
         Loads a webpage and checks for a 'Show More' (load more) pagination button.
@@ -163,21 +163,10 @@ class ShowMoreButtonDetector:
             otherwise None.
         """
         try:
-            page = self.get_page()
 
-            await page.goto(url, timeout=self.timeout, wait_until="load")
+            _, soup = await self.page_processing.return_soup(page)
 
-            await page.wait_for_timeout(random.uniform(1000, 3000))
-
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            html_content = await page.content()
-            soup = BeautifulSoup(html_content, "html.parser")
-
-            # Remove unnecessary tags for llm input clarity
-            for tag in soup(["script", "style", "meta", "noscript", "svg"]):
-                tag.decompose()
-
-            show_more_button = await self.extract_show_more_button(soup, url)
+            show_more_button = await self.extract_show_more_button(page, soup, url)
 
             return show_more_button
 
@@ -185,9 +174,9 @@ class ShowMoreButtonDetector:
             self.session_logger.warning(f"Playwright error at {url}: {e}")
             if retries > 0:
                 self.session_logger.info("Restarting browser and retrying once...")
-                self.restart_context()
+
                 return await self.check_if_show_more_pagination_button(
-                    url, retries=retries - 1
+                    page, url, retries=retries - 1
                 )
             else:
                 self.session_logger.error("Retry failed, skipping.")
@@ -197,14 +186,26 @@ class ShowMoreButtonDetector:
             self.session_logger.error(f"Unexpected error on {url}: {e}")
             return None
 
-    async def click_button_load_more(self, button_text: str):
+    async def get_page_content(self, page: Page):
+        """Return the cleaned visible text of the current page with noise tags removed."""
+        html_content = await page.content()
+
+        soup = BeautifulSoup(html_content, "html.parser")
+
+        for tag in soup(["script", "style", "meta", "noscript", "svg"]):
+            tag.decompose()
+
+        text = soup.get_text(" ", strip=True)
+
+        return text
+
+    async def click_button_load_more(self, page: Page, button_text: str):
         """
         Try clicking from the last child upwards for the element(s) that match button_text.
         Always re-extracts XPaths from the current DOM so it's up-to-date.
         """
 
         try:
-            page = self.get_page()
 
             html_content = await page.content()
             soup = BeautifulSoup(html_content, "html.parser")
@@ -218,21 +219,27 @@ class ShowMoreButtonDetector:
 
             if not candidate_xpaths:
                 self.session_logger.warning(
-                    f"No candidate XPaths found for text '{button_text}'"
+                    f"[BUTTON_SHOW_MORE] No candidate XPaths found for text '{button_text}'"
                 )
                 return False
-            
+
+            # I have to handle shadow root, but for show more button, it is very rare cases...
             for xpath in candidate_xpaths:
                 try:
-                    page = self.get_page()
                     locator = page.locator(f"xpath={xpath}").first
+
                     await locator.wait_for(state="attached", timeout=self.timeout)
+
                     child_locator = locator.locator("xpath=.//*")
+
                     count = await child_locator.count()
+
                     targets = [child_locator.nth(i) for i in range(count - 1, -1, -1)]
+
                     targets.append(locator)
 
                     for i, target in enumerate(targets):
+
                         try:
 
                             handle = await target.element_handle()
@@ -247,35 +254,37 @@ class ShowMoreButtonDetector:
 
                                 await page.evaluate("(el) => el.click()", handle)
 
-                                self.session_logger.info(f"JS click succeeded")
+                                self.session_logger.info(
+                                    f"[BUTTON_SHOW_MORE] JS click succeeded"
+                                )
 
                                 return True
 
                         except Exception as e:
                             self.session_logger.warning(
-                                f"Failed click on target #{i} of {xpath}: {e}"
+                                f"[BUTTON_SHOW_MORE] Failed click on target #{i} of {xpath}: {e}"
                             )
                             continue
 
                 except Exception as e:
                     self.session_logger.warning(
-                        f"XPath candidate {xpath} not valid in live DOM: {e}"
+                        f"[BUTTON_SHOW_MORE] XPath candidate {xpath} not valid in live DOM: {e}"
                     )
                     continue
 
             self.session_logger.warning(
-                f"Could not click any candidate for text '{button_text}'"
+                f"[BUTTON_SHOW_MORE] Could not click any candidate for text '{button_text}'"
             )
             return False
 
         except Exception as e:
             self.session_logger.error(
-                f"Error in click_last_child for text='{button_text}': {e}"
+                f"[BUTTON_SHOW_MORE] Error in click_last_child for text='{button_text}': {e}"
             )
             return False
 
     async def process_page_with_show_more_button(
-        self, url: str, show_more_button: Tuple[str, str]
+        self, page: Page, url: str, show_more_button: Tuple[str, str]
     ) -> None:
         """
         Handles pages where pagination is driven by a 'Show More' button.
@@ -297,16 +306,12 @@ class ShowMoreButtonDetector:
         fingerprints: set[str] = set()
 
         # Store the first page fingerprint
-        page = self.get_page()
-        html_content = await page.content()
-        page_content = extract_visible_text(html_content)
+        page_content = await self.get_page_content(page)
         prev_fingerprint = hash_page_content(page_content)
         fingerprints.add(prev_fingerprint)
 
         while True:
             try:
-                
-                page = self.get_page()
 
                 current_url = page.url
 
@@ -318,7 +323,7 @@ class ShowMoreButtonDetector:
                     )
                     break
 
-                if not await self.click_button_load_more(button_text):
+                if not await self.click_button_load_more(page, button_text):
                     self.session_logger.info(
                         "No more 'Show More' button found — stopping pagination loop."
                     )
@@ -328,10 +333,8 @@ class ShowMoreButtonDetector:
 
                 await page.wait_for_timeout(random.uniform(3000, 5000))
 
-                html_content = await page.content()
-                
-                page_content = extract_visible_text(html_content)
-                                
+                page_content = await self.get_page_content(page)
+
                 new_fingerprint = hash_page_content(page_content)
 
                 if new_fingerprint in fingerprints:

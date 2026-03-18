@@ -6,7 +6,7 @@ echo " Cleaning up old processes..."
 echo "======================================="
 
 # Kill old processes
-pkill -9 -f "python -m worker.main" || true
+pkill -9 -f "python3 -m worker.main" || true
 pkill -9 -f "playwright" || true
 pkill -9 -f "npm run dev" || true
 pkill -9 -f "concurrently" || true
@@ -173,11 +173,14 @@ else
   exit 1
 fi
 
+PYTHON_PATH=".venv/bin/python3"
+
 ###############################################
 # Install Playwright Dependencies
 ###############################################
 echo "Installing Playwright dependencies..."
-playwright install-deps
+"$PYTHON_PATH" -m playwright install
+"$PYTHON_PATH" -m playwright install-deps
 
 ###############################################
 # Connectors Setup
@@ -189,9 +192,9 @@ docker compose -f "$COMPOSE_FILE" exec -T -e NODE_ENV=development "$CONNECT_CONT
 ###############################################
 # Start Frontend + Workers
 ###############################################
-NODE_ENV=development WORKER_ID=analyser python -m worker.main & \
-# NODE_ENV=development WORKER_ID=check_jobs python -m worker.main & \
-npm run dev
+# NODE_ENV=development WORKER_ID=analyser "$PYTHON_PATH" -m worker.main & \
+# NODE_ENV=development WORKER_ID=check_jobs "$PYTHON_PATH" -m worker.main & \
+# npm run dev
 
 echo "======================================="
 echo " Development environment is ready!"

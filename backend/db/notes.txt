@@ -2,6 +2,8 @@ To make migrations:
 
 cd backend/db/drizzle
 
+export NODE_ENV = XXXX (XXXX: either development or production)
+
 npx drizzle-kit generate
 
-NODE_ENV=XXXXX npx drizzle-kit push (XXX: either development or production)
+npx drizzle-kit push 

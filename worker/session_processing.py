@@ -18,10 +18,9 @@ async def fetch_company_from_db(
 ) -> Optional[CompanyRecord]:
     """Fetch full company info from the database based on company_id."""
     try:
-        if deps.pool_postgres is None:
-            raise RuntimeError("PostgreSQL pool not initialized")
+        pool = deps.get_pool()
 
-        async with deps.pool_postgres.connection() as conn:
+        async with pool.connection() as conn:
             async with conn.cursor() as cur:
 
                 await cur.execute(

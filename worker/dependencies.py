@@ -1,15 +1,12 @@
-import os 
+import os
 
 from sentence_transformers import SentenceTransformer
 from redis.asyncio import Redis
-from psycopg_pool import AsyncConnectionPool
 from dotenv import load_dotenv
-from typing import Optional 
-from urllib.parse import quote_plus
 from openai import AsyncOpenAI
+from psycopg_pool import AsyncConnectionPool as ConnectionPool
 
 load_dotenv()
-
 
 # Worker Params
 WORKER_ID: str = os.getenv("WORKER_ID", "")
@@ -37,34 +34,43 @@ DATABASE = os.getenv(f"PG_DATABASE_{PREFIX_ENV}", os.getenv("PG_DATABASE", "data
 PORT = int(os.getenv("PG_PORT", 5432))
 
 DATABASE_URL = (
-    f"postgresql://{quote_plus(USERNAME)}:{quote_plus(PASSWORD)}"
-    f"@{HOST_DB}:{PORT}/{DATABASE}"
+    f"host={HOST_DB} "
+    f"port={PORT} "
+    f"dbname={DATABASE} "
+    f"user={USERNAME} "
+    f"password={PASSWORD}"
 )
 
-pool_postgres: Optional[AsyncConnectionPool] = None
+_pool: ConnectionPool | None = None
+
 
 async def init_postgres_pool() -> None:
-    global pool_postgres
-
-    if pool_postgres is not None:
+    global _pool
+    if _pool is not None:
         return
 
-    pool_postgres = AsyncConnectionPool(
-        DATABASE_URL,
+    _pool = ConnectionPool(
+        conninfo=DATABASE_URL,
         min_size=1,
-        max_size=3,
+        max_size=5,
+        max_lifetime=180,
+        max_idle=60,
+        reconnect_timeout=5,
     )
-    
-    await pool_postgres.open()
+    await _pool.open()
 
 
 async def close_postgres_pool() -> None:
-    global pool_postgres
+    global _pool
+    if _pool is not None:
+        await _pool.close()
+        _pool = None
 
-    if pool_postgres is not None:
-        await pool_postgres.close()
-        pool_postgres = None
 
+def get_pool() -> ConnectionPool:
+    if _pool is None:
+        raise RuntimeError("PostgreSQL pool not initialized. Call init_postgres_pool() first.")
+    return _pool
 
 # Redis
 REDIS_HOST = os.getenv(f"REDIS_HOST_{PREFIX_ENV}", os.getenv("REDIS_HOST", "localhost"))
@@ -87,8 +93,9 @@ RABBITMQ_URL = (
     f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}" f"@{RABBITMQ_HOST}:{RABBITMQ_PORT}/"
 )
 
-# boto
+# R2
 CLOUDFLARE_R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
 CLOUDFLARE_R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
 CLOUDFLARE_R2_BUCKET = os.getenv("R2_BUCKET_NAME")
 CLOUDFLARE_R2_ENDPOINT = os.getenv("R2_ENDPOINT")
+

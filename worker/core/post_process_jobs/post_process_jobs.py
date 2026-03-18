@@ -1,19 +1,20 @@
 import random
-import requests
+import asyncio
 import pymupdf  # type: ignore
 import pymupdf4llm  # type: ignore
 import aiohttp
+import aiofiles
+import aiofiles.os
 import numpy as np
-import tempfile
-import os 
-import asyncio 
+import os
+import uuid
 
 from numpy.linalg import norm
 from Levenshtein import ratio as levenshtein_ratio
 from bs4 import BeautifulSoup
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, Page
 from worker.core.find_company_logo import FindCompanyLogo
-from typing import Callable, Any, Optional, List
+from typing import Any, Optional, List, Dict, Tuple
 from worker.constants.prompts import (
     get_extract_company_description_prompt,
     get_job_infos_prompt,
@@ -27,14 +28,15 @@ from worker.types.worker_types import (
 from worker.dependencies import llm_client, LLM_MODEL, encoder_model
 from worker.utils.text_utils import get_emails
 from worker.core.post_process_jobs.constants import COUNTRY_REGION_DATA, BLOCKED_EXTENSIONS
+from docx import Document
+from pathlib import Path
+from simhash import Simhash  # type: ignore
 
 class PostProcessingJobs:
     def __init__(
         self,
         session_logger: Any,
-        get_page: Callable[[], Page],
         emails: set[str],
-        restart_context: Callable,
         company_name: str,
         company_id: int,
         job_offers: List[Job],
@@ -42,59 +44,22 @@ class PostProcessingJobs:
         new_job_offers: List[Job],
         current_job_offers: set[str],
         company_description: Optional[str],
-        fetch_company_logo: bool = False,
-        timeout: int = 20000,
-    ) -> None:
-        self.get_page = get_page
+        timeout: int = 30000,
+    ):
         self.session_logger = session_logger
-        self.emails = emails
-        self.restart_context = restart_context
-        self.company_id = company_id
-        self.company_name = company_name
-        self.fetch_company_logo = fetch_company_logo
-        self.company_description = company_description
         self.timeout = timeout
-        self.current_job_offers = current_job_offers
+        self.emails = emails
+        self.company_name = company_name
+        self.company_id = company_id
         self.job_offers = job_offers
         self.old_job_offers = old_job_offers
         self.new_job_offers = new_job_offers
-        
+        self.current_job_offers = current_job_offers
+        self.company_description = company_description
+
         self.find_company_logo = FindCompanyLogo(
-            self.get_page, self.session_logger, self.company_name, self.company_id
+            self.session_logger, self.company_name, self.company_id
         )
-        
-    @staticmethod
-    def not_seen_and_add(url: str, seen: set[str]) -> bool:
-        
-        if url in seen:
-            return False
-        
-        seen.add(url)
-        
-        return True
-
-    @staticmethod
-    def is_pdf_url_valid(url: str, timeout: int = 10) -> bool:
-        """Check if a PDF or file URL returns HTTP 200 (fast check)."""
-        try:
-            headers = {"User-Agent": "Mozilla/5.0"}
-
-            response = requests.head(
-                url, allow_redirects=True, timeout=timeout, headers=headers
-            )
-
-            if response.status_code == 405:
-                response = requests.get(
-                    url, allow_redirects=True, timeout=timeout, stream=True
-                )
-                response.close()
-
-            return response.status_code == 200
-
-        except requests.Timeout:
-            return False
-        except Exception as e:
-            return False
 
     @staticmethod
     def find_best_match_country(
@@ -122,6 +87,23 @@ class PostProcessingJobs:
         best_match, best_score = max(matches, key=lambda x: x[1])
 
         return best_match if best_score >= score_threshold else None
+
+    @staticmethod
+    async def is_pdf_url_valid(url: str, timeout: int = 10) -> bool:
+        """Check if a PDF or file URL returns HTTP 200 (fast check)."""
+        try:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            timeout_obj = aiohttp.ClientTimeout(total=timeout)
+
+            async with aiohttp.ClientSession(timeout=timeout_obj) as session:
+                async with session.head(url, allow_redirects=True, headers=headers) as response:
+                    if response.status == 405:
+                        async with session.get(url, allow_redirects=True, headers=headers) as get_response:
+                            return get_response.status == 200
+                    return response.status == 200
+
+        except Exception:
+            return False
 
     @staticmethod
     def find_best_match_region(
@@ -165,17 +147,10 @@ class PostProcessingJobs:
 
     @staticmethod
     async def job_vector_embedding(job_title: str) -> Optional[np.ndarray]:
-        """Return L2-normalized embedding safely in async worker."""
-
-        if not job_title:
-            return None
-
+        """Return the L2-normalized embedding for a job title, or None if invalid."""
         embedding = await asyncio.to_thread(
-            encoder_model.encode,
-            job_title,
-            convert_to_tensor=True,
+            encoder_model.encode, job_title, convert_to_tensor=True
         )
-
         embedding_np = embedding.cpu().numpy()
         norm_val = norm(embedding_np)
 
@@ -184,66 +159,138 @@ class PostProcessingJobs:
 
         return embedding_np / norm_val
 
-    async def extract_job_description_pdf(self, url: str) -> Optional[str]:
-        """Download a PDF from URL and extract markdown text."""
+    @staticmethod
+    def replace_israel(country):
+        """Normalize country name: replace 'Israel' with 'Occupied Palestine'."""
+        return "Occupied Palestine" if country == "Israel" else country
 
-        def _extract_markdown_from_file(pdf_bytes: bytes) -> str:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                tmp.write(pdf_bytes)
-                tmp_path = tmp.name
+    async def extract_job_description_file(
+        self,
+        url: str,
+        MAX_PARAGRAPHS_DOCX=500,
+        MAX_FILE_SIZE_MB: int = 50,
+    ) -> tuple[Optional[str], Optional[int]]:
+        """Download and extract text content from a PDF or DOCX job description file, returning the text and its SimHash."""
+
+        markdown: str | list[str]
+        content: str | None = None
+
+        url_lower = url.lower()
+        max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+
+        # ---------- PDF ----------
+        if url_lower.endswith(".pdf"):
+            tmp_filename = f"{uuid.uuid4()}.pdf"
+            tmp_path = os.path.join("/tmp", tmp_filename)
 
             try:
-                
-                markdown_text = str(pymupdf4llm.to_markdown(tmp_path))
-                
-                return markdown_text
-            
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url_lower) as response:
+                        response.raise_for_status()
+
+                        content_length = response.headers.get("Content-Length")
+                        if content_length and int(content_length) > max_bytes:
+                            return None, None
+
+                        size = 0
+                        async with aiofiles.open(tmp_path, "wb") as f:
+                            async for chunk in response.content.iter_chunked(8192):
+                                size += len(chunk)
+                                if size > max_bytes:
+                                    return None, None
+                                await f.write(chunk)
+
+                result = await asyncio.to_thread(
+                    pymupdf4llm.to_markdown, tmp_path, page_chunks=True
+                )
+
+                if not isinstance(result, list):
+                    raise TypeError("Expected list of page chunks")
+
+                pages: List[Dict[str, Any]] = result
+
+                pages_text: List[str] = [page.get("text", "") for page in pages]
+
+                content = "\n\n".join(pages_text)
+
             finally:
-                os.remove(tmp_path)
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status != 200:
-                        self.session_logger.warning(
-                            f"Failed to download PDF {url}, status {response.status}"
-                        )
-                        return None
+                if await aiofiles.os.path.exists(tmp_path):
+                    await aiofiles.os.remove(tmp_path)
 
-                    pdf_bytes = await response.read()
+        # ---------- DOCX ----------
+        elif url_lower.endswith(".docx"):
+            tmp_filename = f"{uuid.uuid4()}.docx"
+            tmp_path = os.path.join("/tmp", tmp_filename)
 
-            markdown_text = await asyncio.to_thread(
-                _extract_markdown_from_file,
-                pdf_bytes,
-            )
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url_lower) as response:
+                        response.raise_for_status()
 
-            if not markdown_text:
-                return None
+                        content_length = response.headers.get("Content-Length")
+                        if content_length and int(content_length) > max_bytes:
+                            return None, None
 
-            if new_emails := get_emails(markdown_text):
-                self.session_logger.info(f"Emails found: {new_emails}")
-                self.emails.update(new_emails)
+                        size = 0
+                        async with aiofiles.open(tmp_path, "wb") as f:
+                            async for chunk in response.content.iter_chunked(8192):
+                                size += len(chunk)
+                                if size > max_bytes:
+                                    return None, None
+                                await f.write(chunk)
 
-            return markdown_text
+                docx_doc = await asyncio.to_thread(Document, tmp_path)
 
-        except Exception:
-            self.session_logger.exception(
-                f"PDF extraction failed for {url}"
-            )
-            return None
+                paragraphs = [
+                    p.text.strip()
+                    for p in docx_doc.paragraphs[:MAX_PARAGRAPHS_DOCX]
+                    if p.text and p.text.strip()
+                ]
 
-    async def extract_job_description(self, url: str, retries=1) -> Optional[str]:
+                content = "\n\n".join(paragraphs).strip()
+
+            finally:
+                if await aiofiles.os.path.exists(tmp_path):
+                    await aiofiles.os.remove(tmp_path)
+
+        # ---------- Unsupported ----------
+        else:
+            return None, None
+
+        # ---------- SimHash + Emails ----------
+        simhash_value: Optional[int] = None
+
+        if content and len(content) > 50:
+            tokens = content.split()
+            simhash_obj = await asyncio.to_thread(Simhash, tokens)
+            simhash = simhash_obj.value
+
+            if simhash is None:
+                self.session_logger.warning("Simhash returned None, skipping hash computation")
+            else:
+                simhash_value = int(simhash & ((1 << 63) - 1))
+        else:
+            self.session_logger.info("Job description too short (<50 chars), skipping SimHash")
+
+        if content and (new_emails := get_emails(content)):
+            self.session_logger.info(f"Emails found: {new_emails}")
+            self.emails.update(new_emails)
+
+        return content, simhash_value
+
+    async def extract_job_description(
+        self, page: Page, url: str, retries=1
+    ) -> Optional[Tuple[str, Optional[int]]]:
         """Extract a job description text from a job description page."""
         try:
-
-            page = self.get_page()
 
             await page.goto(url, timeout=self.timeout, wait_until="load")
 
             await page.wait_for_timeout(random.uniform(1000, 3000))
 
-            soup = BeautifulSoup(await page.content(), "lxml")
-            
+            html_content = await page.content()
+            soup = await asyncio.to_thread(BeautifulSoup, html_content, "lxml")
+
             job_description = soup.body or soup
 
             for tag in job_description(["script", "style", "meta", "noscript", "svg"]):
@@ -251,11 +298,30 @@ class PostProcessingJobs:
 
             text_job_description = job_description.get_text(separator="\n", strip=True)
 
+            simhash_value: Optional[int] = None
+
+            if len(text_job_description) > 50:
+                tokens = text_job_description.split()
+                simhash_obj = await asyncio.to_thread(Simhash, tokens)
+                simhash = simhash_obj.value
+
+                if simhash is None:
+                    self.session_logger.warning(
+                        "Simhash returned None, skipping hash computation"
+                    )
+                else:
+                    # Force signed 63-bit integer (PostgreSQL-safe)
+                    simhash_value = int(simhash & ((1 << 63) - 1))
+            else:
+                self.session_logger.info(
+                    "Job description too short (<50 chars), skipping SimHash"
+                )
+
             if new_emails := get_emails(text_job_description):
                 self.session_logger.info(f"Emails found: {new_emails}")
                 self.emails.update(new_emails)
 
-            return text_job_description
+            return text_job_description, simhash_value
 
         except PlaywrightTimeoutError as e:
             self.session_logger.warning(f"Timeout loading {url}: {e}")
@@ -263,9 +329,8 @@ class PostProcessingJobs:
             self.session_logger.warning(f"Playwright failure at {url}: {e}")
 
         if retries > 0:
-            self.session_logger.info("Restarting browser and retrying...")
-            self.restart_context()
-            return await self.extract_job_description(url, retries=retries - 1)
+            self.session_logger.info("Retrying...")
+            return await self.extract_job_description(page, url, retries=retries - 1)
 
         self.session_logger.error(
             f"Failed to extract job description from {url} after retries."
@@ -301,11 +366,8 @@ class PostProcessingJobs:
             return None
 
         try:
-            
             validated = CompanyDescriptionResponse.model_validate(result_structured)
-            
             return validated.company_description
-        
         except Exception as e:
             self.session_logger.error(f"Failed to validate company description: {e}")
             return None
@@ -354,7 +416,7 @@ class PostProcessingJobs:
             validated.salary,
         )
 
-    async def check_single_link(self, job_url: str) -> bool:
+    async def check_single_link(self, page: Page, job_url: str) -> bool:
         """Check a single job link using Playwright."""
         if not job_url or job_url.lower().startswith("mailto:"):
             self.session_logger.info(f"📧 Skipping mailto or invalid URL: {job_url}")
@@ -366,7 +428,7 @@ class PostProcessingJobs:
             self.session_logger.info(f"📎 File link detected: {job_url}")
 
             # Check if it's reachable
-            if self.is_pdf_url_valid(job_url):
+            if await self.is_pdf_url_valid(job_url):
                 self.session_logger.info(f"{job_url} reachable (200 OK)")
                 return True
             else:
@@ -374,8 +436,6 @@ class PostProcessingJobs:
                 return False
 
         try:
-            
-            page = self.get_page()
 
             response = await page.goto(
                 job_url, timeout=self.timeout, wait_until="domcontentloaded"
@@ -403,8 +463,16 @@ class PostProcessingJobs:
             self.session_logger.warning(f"Error checking {job_url}: {e}")
             return False
 
-    async def post_process(self) -> None:
+    async def post_process(self, page: Page) -> None:
         """Post-process and enrich scraped job offers with embeddings, descriptions, and metadata."""
+
+        # --- Filter and deduplicate job offers ---
+        def not_seen_and_add(url: str, seen: set[str]) -> bool:
+            if url in seen:
+                return False
+            seen.add(url)
+            return True
+
         seen_urls: set[str] = set()
 
         job_offers_urls = set([job["job_url"] for job in self.job_offers])
@@ -417,7 +485,7 @@ class PostProcessingJobs:
             if job.get("job_title")
             and job.get("job_url")
             and job["job_url"] not in self.current_job_offers
-            and self.not_seen_and_add(job["job_url"], seen_urls)
+            and not_seen_and_add(job["job_url"], seen_urls)
             # and await self.check_single_link(job["job_url"])
         ]
 
@@ -431,12 +499,12 @@ class PostProcessingJobs:
             f"Old Job Offers {len(self.old_job_offers)}: {self.old_job_offers}"
         )
 
+        blocked_extensions = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".rar")
         filtered_offers = []
         nb_job_offers_to_process = len(new_job_offers_to_complete)
 
         # --- Process each job offer ---
         for index, job in enumerate(new_job_offers_to_complete):
-            
             self.session_logger.info(
                 f"Processing job offer #{index + 1}/{nb_job_offers_to_process}: {job}"
             )
@@ -451,7 +519,7 @@ class PostProcessingJobs:
             )
 
             # Skip invalid URLs (attachments, mailto, etc.)
-            if job_url.lower().endswith(BLOCKED_EXTENSIONS) or job_url.startswith(
+            if job_url.lower().endswith(blocked_extensions) or job_url.startswith(
                 "mailto:"
             ):
 
@@ -463,16 +531,30 @@ class PostProcessingJobs:
                 filtered_offers.append(job)
 
                 continue
-            
-            job_description = None
-            
+
             # --- Extract job description ---
-            if job_url.lower().endswith(".pdf"):
-                job_description = await self.extract_job_description_pdf(job_url)
-            else: 
-                job_description = await self.extract_job_description(job_url)
-                
+
+            result_job_description = None
+
+            if job_url.lower().endswith((".pdf", ".docx")):
+
+                result_job_description = await self.extract_job_description_file(
+                    job_url
+                )
+
+            else:
+
+                result_job_description = await self.extract_job_description(
+                    page, job_url
+                )
+
+            if result_job_description is None:
+                job_description, hash_job_description_page = None, None
+            else:
+                job_description, hash_job_description_page = result_job_description
+
             job["job_description"] = job_description
+            job["hash_job_description_page"] = hash_job_description_page
 
             # --- Extract structured info ---
             if job_description:
@@ -492,22 +574,21 @@ class PostProcessingJobs:
                     {
                         "skills_required": skills_required,
                         "salary": salary,
-                        "location_country": country,
+                        "location_country": self.replace_israel(country),
                         "location_region": region,
                     }
                 )
 
             # --- Extract company info once ---
             if index == 0:
-                
                 if job_description:
-                    
                     self.company_description = await self.extract_company_description(
                         job_description
                     )
-                    
-                if self.fetch_company_logo:
-                    await self.find_company_logo.get_company_logo_url()
+                    self.session_logger.info(
+                        f"Company description inside postprocess: {self.company_description}"
+                    )
+                await self.find_company_logo.get_company_logo_url(page)
 
             filtered_offers.append(job)
 

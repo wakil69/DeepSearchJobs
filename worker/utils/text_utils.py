@@ -166,7 +166,7 @@ def extract_structured_text(
     return "\n".join(structured_content)[:128000]
 
 def extract_structured_text_chunks(
-        soup: BeautifulSoup, url: str, job_offers
+        job_offers: List[Job], soup: BeautifulSoup, url: str
     ) -> List[str]:
         """
         Extracts structured text from single-page or 'load more'-style career pages
@@ -316,7 +316,7 @@ def extract_structured_text_chunks(
             chunks.append("\n".join(current_chunk))
 
         return chunks
-
+    
 def hash_page_content(text_content: str) -> str:
     """Creates a hash of the page content to detect duplicates."""
     return hashlib.md5(text_content.encode()).hexdigest()

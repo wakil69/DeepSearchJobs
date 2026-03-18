@@ -6,9 +6,10 @@ from lxml import etree, html
 from worker.types.worker_types import (
     ContainerIdentifier,
     PaginationButtons,
+    PaginationSelector
 )
 from bs4.element import PageElement
-from typing import List, Tuple, Optional, cast, Any, Callable
+from typing import List, Tuple, Optional, cast, Any
 from worker.constants.prompts import (
     PROMPT_IDENTIFY_PAGINATION_CONTAINER,
 )
@@ -18,25 +19,24 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError, Page
 from worker.dependencies import llm_client, LLM_MODEL
 from worker.utils.url_utils import share_base_and_path_level, normalize_url
 from worker.core.pagination_detector.constants import TEXT_KEYWORDS, PAGINATION_KEYWORDS
-
+from worker.core.page_processing.page_processing import PageProcessing
 
 class PaginationDetector:
     def __init__(
         self,
         session_logger: Any,
-        get_page: Callable[[], Page],
         containers_pagination_html: dict[str, set[str]],
-        restart_context: Callable,
-        timeout: int = 20000,
-    ) -> None:
+        timeout: int = 20000
+    ):
         self.session_logger = session_logger
-        self.get_page = get_page
-        self.restart_context = restart_context
         self.containers_pagination_html = containers_pagination_html
-        self.timeout = timeout 
+        self.timeout = timeout
         
+        self.page_processing = PageProcessing(session_logger=session_logger)
+
     @staticmethod
     def is_clickable(el: Tag) -> bool:
+        """Return True if the element is interactive (link, button, input, or JS-driven click target)."""
         if el.name in {"a", "button"}:
             return True
 
@@ -76,27 +76,6 @@ class PaginationDetector:
         return False
 
     @staticmethod
-    def matches_keywords(tag: Tag) -> bool:
-        def attr_text(t: PageElement, attr: str) -> str:
-            if not isinstance(t, Tag):
-                return ""
-            val = t.get(attr)
-            if isinstance(val, list):
-                return " ".join(val).lower()
-            return (val or "").lower()
-
-        for attr in ("id", "class", "aria-label"):
-            if any(kw in attr_text(tag, attr) for kw in PAGINATION_KEYWORDS):
-                return True
-
-        # Also check children
-        for child in tag.find_all(True):
-            for attr in ("id", "class", "aria-label"):
-                if any(kw in attr_text(child, attr) for kw in PAGINATION_KEYWORDS):
-                    return True
-        return False
-
-    @staticmethod
     def contains_text_keyword(tag: Tag) -> bool:
         """Check whether the tag or its children contain pagination-related keywords."""
 
@@ -126,7 +105,30 @@ class PaginationDetector:
         return any(kw in combined_text for kw in TEXT_KEYWORDS)
 
     @staticmethod
+    def matches_keywords(tag: Tag) -> bool:
+        """Return True if the tag or any of its children has a pagination-related id, class, or aria-label."""
+        def attr_text(t: PageElement, attr: str) -> str:
+            if not isinstance(t, Tag):
+                return ""
+            val = t.get(attr)
+            if isinstance(val, list):
+                return " ".join(val).lower()
+            return (val or "").lower()
+
+        for attr in ("id", "class", "aria-label"):
+            if any(kw in attr_text(tag, attr) for kw in PAGINATION_KEYWORDS):
+                return True
+
+        # Also check children
+        for child in tag.find_all(True):
+            for attr in ("id", "class", "aria-label"):
+                if any(kw in attr_text(child, attr) for kw in PAGINATION_KEYWORDS):
+                    return True
+        return False
+
+    @staticmethod
     def count_base_links(base_url: str, tag: Tag) -> int:
+        """Count how many anchor hrefs inside the tag contain the base URL (same-domain signal)."""
         if not base_url:
             return 0
         hrefs = [a.get("href", "") for a in tag.find_all("a") if isinstance(a, Tag)]
@@ -136,7 +138,41 @@ class PaginationDetector:
             for href in hrefs
         )
 
+    @staticmethod
+    def is_hidden(el):
+        """Return True if the element is visually hidden via style, attribute, or common CSS class."""
+        style = (el.get("style") or "").lower()
+        classes = (el.get("class") or "").split()
+        hidden_attr = el.get("hidden")
+        aria_hidden = el.get("aria-hidden")
+
+        # style-based hiding
+        if "display:none" in style or "visibility:hidden" in style:
+            return True
+
+        # html attributes
+        if hidden_attr is not None:
+            return True
+
+        if aria_hidden == "true":
+            return True
+
+        # class-based hiding
+        hidden_classes = {
+            "hide",
+            "hidden",
+            "d-none",
+            "is-hidden",
+            "visually-hidden",
+        }
+
+        if any(c.lower() in hidden_classes for c in classes):
+            return True
+
+        return False
+    
     def has_clickable(self, tag: Tag) -> bool:
+        """Return True if the tag itself or any descendant is a clickable pagination element."""
         # Strong pagination container signal
         role = tag.get("role")
         if isinstance(role, str) and role.lower() in {"navigation", "radiogroup"}:
@@ -155,20 +191,29 @@ class PaginationDetector:
                 return True
 
         return False
-
-    async def extract_xpaths_from_container(
-        self, container_html: str, soup: BeautifulSoup
+    
+    async def extract_links_selectors_from_container(
+        self, page: Page, container_html: str, soup: BeautifulSoup
     ) -> PaginationButtons:
         """
-        Extracts valid full-page XPath selectors for clickable elements that match
-        the provided container structure (useful for detecting pagination buttons).
+        Extracts usable selectors for clickable pagination elements.
+        Supports both light DOM (XPath) and Shadow DOM (Playwright locators).
+
+        Returns:
+        {
+            "selectors": [
+                {"type": "xpath", "value": "..."},
+                {"type": "playwright", "value": "..."}
+            ],
+            "is_shadow_dom": bool
+        }
         """
         # --- Parse the provided container HTML snippet ---
         try:
             container_root = html.fromstring(container_html)
         except Exception as e:
             self.session_logger.warning(f"Failed to parse container HTML: {e}")
-            return {"pagination_buttons": []}
+            return {"selectors": [], "is_shadow_dom": False}
 
         # --- Parse the full page HTML (from BeautifulSoup) into lxml for XPath operations ---
         try:
@@ -176,7 +221,7 @@ class PaginationDetector:
             full_tree = etree.ElementTree(full_root)
         except Exception as e:
             self.session_logger.warning(f"Failed to parse soup into lxml: {e}")
-            return {"pagination_buttons": []}
+            return {"selectors": [], "is_shadow_dom": False}
 
         # --- Identify the container tag and its attributes for matching ---
         tag = container_root.tag
@@ -184,7 +229,7 @@ class PaginationDetector:
 
         # --- Find all elements with the same tag in the full DOM ---
         candidates = cast(list[etree._Element], full_tree.xpath(f".//{tag}"))
-        matching_containers = []
+        matching_containers: list[etree._Element] = []
 
         # --- Keep containers whose attributes closely match the original container ---
         for c in candidates:
@@ -209,56 +254,117 @@ class PaginationDetector:
             self.session_logger.warning(
                 f"No matching containers found in full DOM for <{tag} {el_attrib}>"
             )
-            return {"pagination_buttons": []}
+            return {"selectors": [], "is_shadow_dom": False}
 
-        pagination_xpaths = set()
+        selectors: List[PaginationSelector] = []
+        is_shadow_dom = False
 
         # --- For each matching container, look for clickable elements inside it ---
+
+        first_container = matching_containers[0]
+        try:
+            container_xpath = full_tree.getpath(first_container)
+            container_locator = page.locator(f"xpath={container_xpath}")
+            if await container_locator.count() == 0:
+                is_shadow_dom = True
+                self.session_logger.info(
+                    f"Container not reachable by XPath → Shadow DOM detected: {first_container}"
+                )
+        except Exception:
+            is_shadow_dom = True
+
         for matched in matching_containers:
             try:
-
                 clickable_elements = cast(
                     list[etree._Element],
                     matched.xpath(
-                        ".//a | .//button | .//input[@type='submit' or @type='button'] | .//*[@onclick] | .//*[@role='button']"
+                        """
+                        .//a |
+                        .//button |
+                        .//input[
+                            @type='submit' or
+                            @type='button' or
+                            @type='radio' or
+                            @type='checkbox' or
+                            @type='image'
+                        ] |
+                        .//*[@onclick] |
+                        .//*[@role='button'] |
+                        .//*[@role='link'] |
+                        .//*[@aria-roledescription='button'] |
+                        .//*[@aria-roledescription='link'] |
+                        .//*[@tabindex and number(@tabindex) >= 0]
+                        """
                     ),
                 )
 
-                # --- Generate XPaths for each clickable element ---
                 for el in clickable_elements:
+                    
+                    if self.is_hidden(el):
+                        self.session_logger.info(
+                            f"[PAGINATION_DEBUG] Skipping hidden element → tag={el.tag} "
+                            f"text='{(el.text or '').strip()[:40]}'"
+                        )
+                        continue
+                    
+                    tag_name = el.tag
+                    aria_label = el.get("aria-label")
+                    role = el.get("role")
+                    input_type = el.get("type")
+                    value = el.get("value")
+
+                    # ---------- SHADOW DOM PATH ----------
+                    if is_shadow_dom:
+                        # Generate Playwright selectors
+                        selector = None
+
+                        if tag_name == "input" and input_type == "radio" and aria_label:
+                            selector = f"role=radio[name='{aria_label}']"
+                        elif tag_name == "button" and aria_label:
+                            selector = f"role=button[name='{aria_label}']"
+                        elif tag_name == "a" and aria_label:
+                            selector = f"text='{aria_label}'"
+                        elif value:
+                            selector = f"css=input[value='{value}']"
+
+                        if selector:
+                            locator = page.locator(selector)
+                            if await locator.count() > 0:
+                                selectors.append(
+                                    {"type": "playwright", "value": selector}
+                                )
+                                self.session_logger.info(f"Added SHADOW selector: {selector}")
+                        continue
+
+                    # ---------- LIGHT DOM PATH ----------
                     try:
                         xpath = full_tree.getpath(el)
                         href = el.get("href")
 
-                        # Add href filter if available (more precise locator)
                         xpath_with_href = (
                             f"{xpath}[@href='{unescape(href.strip())}']"
                             if href
                             else xpath
                         )
 
-                        # --- Verify visibility in the actual page using Playwright ---
-                        try:
-                            page = self.get_page()
-                            locator = page.locator(
-                                f"xpath={xpath_with_href}"
-                            ).first
-                            if await locator.count() > 0:
-                                pagination_xpaths.add(xpath_with_href)
-                            else:
-                                self.session_logger.info(f"Not visible: {xpath_with_href}")
-                        except Exception as e:
-                            self.session_logger.info(
-                                f"Visibility check failed for {xpath_with_href}: {e}"
+                        locator = page.locator(f"xpath={xpath_with_href}")
+                        if await locator.count() > 0:
+                            selectors.append(
+                                {"type": "xpath", "value": xpath_with_href}
                             )
+                            # self.session_logger.info(f"Added XPath: {xpath_with_href}")
 
                     except Exception as e:
-                        self.session_logger.warning(f"Error processing element XPath: {e}")
+                        self.session_logger.warning(f"Error processing XPath: {e}")
+
             except Exception as e:
                 self.session_logger.warning(f"Error processing container: {e}")
 
-        return {"pagination_buttons": list(pagination_xpaths)}
-
+        return {
+            "selectors": selectors,
+            "is_shadow_dom": is_shadow_dom,
+        }
+        
     async def identify_pagination_container(
         self, soup: BeautifulSoup, base_url: str
     ) -> Optional[Tuple[str, str]]:
@@ -311,6 +417,8 @@ class PaginationDetector:
             key=lambda tag: self.count_base_links(base_url, tag),
             reverse=True,
         )
+        
+        # self.session_logger.info(unique_candidates)
 
         max_retries = 2
         retry_delay = 2
@@ -329,15 +437,18 @@ class PaginationDetector:
             for _ in range(max_retries):
 
                 try:
-                    result_structured = await call_llm_structured(
-                        llm_client=llm_client,
-                        model=LLM_MODEL,
-                        messages=messages,
-                        logger=self.session_logger,
-                        max_tokens=8192,
-                        temperature=0.0,
-                        retry=True,
-                        pydantic_model=ContainerIdentifier,
+
+                    result_structured: Optional[ContainerIdentifier] = (
+                        await call_llm_structured(
+                            llm_client=llm_client,
+                            model=LLM_MODEL,
+                            messages=messages,
+                            logger=self.session_logger,
+                            max_tokens=8192,
+                            temperature=0.0,
+                            retry=True,
+                            pydantic_model=ContainerIdentifier,
+                        )
                     )
 
                     if not result_structured:
@@ -370,9 +481,9 @@ class PaginationDetector:
         self.session_logger.info("No valid pagination container identified.")
 
         return None
-
+    
     async def extract_pagination_buttons(
-        self, soup: BeautifulSoup, base_url: str
+        self, page: Page, soup: BeautifulSoup, base_url: str
     ) -> PaginationButtons:
         """
         Two-step process to extract pagination buttons using LLM assistance.
@@ -392,10 +503,10 @@ class PaginationDetector:
             )
 
             for container_html in self.containers_pagination_html[base_url]:
-                pagination_data = await self.extract_xpaths_from_container(
-                    container_html, soup
+                pagination_data = await self.extract_links_selectors_from_container(
+                    page, container_html, soup
                 )
-                if pagination_data["pagination_buttons"]:
+                if pagination_data["selectors"]:
                     self.containers_pagination_html[base_url].add(container_html)
                     self.session_logger.info("Found working container from set.")
                     return pagination_data
@@ -403,25 +514,31 @@ class PaginationDetector:
             self.session_logger.info("None of the containers worked. Falling back to LLM.")
 
         # --- Step 2: Fallback — ask LLM to identify a new pagination container ---
-        container_identified = await self.identify_pagination_container(soup, base_url)
+        container_identified = await self.identify_pagination_container(
+            soup, base_url
+        )
 
         if not container_identified:
 
             self.session_logger.info("No valid container found.")
 
-            return {"pagination_buttons": []}
+            return {"selectors": [], "is_shadow_dom": False}
 
-        _, container_html = container_identified
+        _, container_pagination_html = container_identified
 
         # --- Cache the newly discovered container ---
-        self.containers_pagination_html[base_url].add(container_html)
+        self.containers_pagination_html[base_url].add(container_pagination_html)
 
         # --- Extract pagination XPaths from the identified container ---
-        pagination_data = await self.extract_xpaths_from_container(container_html, soup)
+        pagination_data = await self.extract_links_selectors_from_container(
+            page, container_pagination_html, soup
+        )
 
         return pagination_data
-
-    async def check_if_pagination_buttons(self, url: str, retries=1) -> List[str]:
+    
+    async def check_if_pagination_buttons(
+        self, page: Page, url: str, retries=1
+    ) -> PaginationButtons:
         """
         Loads a given URL using Playwright and attempts to detect pagination buttons.
 
@@ -433,92 +550,146 @@ class PaginationDetector:
             A list of XPath strings corresponding to detected pagination buttons.
         """
         try:
-            
-            page = self.get_page()
 
             await page.goto(url, timeout=self.timeout, wait_until="load")
 
-            await page.wait_for_timeout(random.uniform(1000, 3000))
+            await page.wait_for_timeout(random.uniform(3000, 5000))
 
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
 
-            html_content = await page.content()
+            _, soup = await self.page_processing.return_soup(page)
 
-            soup = BeautifulSoup(html_content, "html.parser")
+            pagination_buttons_full = await self.extract_pagination_buttons(
+                page, soup, url
+            )
 
-            for tag in soup(["script", "style", "meta", "noscript", "svg"]):
-                tag.decompose()
-
-            result_pagination_buttons = await self.extract_pagination_buttons(soup, url)
-
-            pagination_buttons = result_pagination_buttons.get("pagination_buttons", [])
-
-            return pagination_buttons
+            return pagination_buttons_full
 
         except PlaywrightTimeoutError as e:
             self.session_logger.warning(f"Playwright error at {url}: {e}")
             if retries > 0:
                 self.session_logger.info("Restarting browser and retrying once...")
-                self.restart_context()
-                return await self.check_if_pagination_buttons(url, retries=retries - 1)
+                return await self.check_if_pagination_buttons(
+                    page, url, retries=retries - 1
+                )
             else:
                 self.session_logger.error("Retry failed, skipping.")
-                return []
+                return {"selectors": [], "is_shadow_dom": False}
 
         except Exception as e:
             self.session_logger.error(f"Unexpected error on {url}: {e}")
-            return []
+            return {"selectors": [], "is_shadow_dom": False}
 
     async def handle_dynamic_pagination(
-        self, button_xpath: str, url: str, base_url: str
-    ) -> None:
-        """Handle JavaScript-based pagination via clickable buttons."""
-        self.session_logger.info(f"Dynamic pagination detected → clicking {button_xpath}")
+        self,
+        page: Page,
+        button: PaginationSelector,
+    ) -> Optional[str]:
+        """
+        Handle JavaScript-based pagination via clickable buttons.
+        Works for both light DOM (XPath) and Shadow DOM (Playwright locators).
+        """
         try:
-            page = self.get_page()
+            # ---------- Resolve locator ----------
+            if button["type"] == "xpath":
+                locator = page.locator(f"xpath={button['value']}").first
 
-            locator = page.locator(f"xpath={button_xpath}").first
-            await locator.wait_for(state="visible", timeout=self.timeout)
-            await locator.scroll_into_view_if_needed()
+            elif button["type"] == "playwright":
+                locator = page.locator(button["value"]).first
 
-            element_handle = await locator.element_handle()
+            else:
+                self.session_logger.warning(f"Unknown pagination selector type: {button}")
+                return None
+
+            self.session_logger.info(
+                f"Dynamic pagination detected → clicking {button['value']}"
+            )
+
+            element_handle = await locator.element_handle(timeout=5000)
             if element_handle:
                 await page.evaluate("(el) => el.click()", element_handle)
-                await page.wait_for_timeout(random.uniform(2000, 5000))
             else:
-                self.session_logger.warning(f"No element handle found for {button_xpath}")
-                return
+                self.session_logger.warning(f"No element handle found for {button['value']}")
+                return None
+
+            # ---------- Wait for content change ----------
+            await page.wait_for_timeout(random.uniform(2000, 5000))
+            
+            new_url = await page.evaluate("() => window.location.href")
+            
+            return new_url
 
         except PlaywrightTimeoutError:
+            
             self.session_logger.warning(
-                f"Timeout: Button not clickable in time: {button_xpath}"
+                f"Timeout: Button not clickable in time: {button['value']}"
             )
+            
+            return None
+            
         except Exception as e:
             self.session_logger.warning(
-                f"Error clicking button {button_xpath}: {type(e).__name__}: {e}"
+                f"Error clicking pagination button {button['value']}: "
+                f"{type(e).__name__}: {e}"
             )
-
-    async def handle_standard_pagination(
-        self, button_xpath: str, url: str, base_url: str
-    ) -> Optional[str]:
-        """Follow standard (href-based) pagination links."""
-        match = re.search(r"\[@href=['\"]([^'\"]+)['\"]\]", button_xpath)
-        
-        if not match:
-            self.session_logger.info(f"Could not extract href from XPath: {button_xpath}")
+            
             return None
 
-        href = match.group(1)
+    async def handle_standard_pagination(
+        self,
+        page: Page,
+        button: PaginationSelector,
+        url: str,
+        base_url: str,
+    ) -> Optional[str]:
+        """
+        Follow href-based pagination links.
+        Works for both light DOM (XPath) and Shadow DOM (Playwright).
+        """
+
+        # ---------- CASE 1: Light DOM (XPath) ----------
+        if button["type"] == "xpath":
+            xpath = button["value"]
+
+            match = re.search(r"\[@href=['\"]([^'\"]+)['\"]\]", xpath)
+            if not match:
+                return None
+
+            href = match.group(1)
+
+        # ---------- CASE 2: Shadow DOM (Playwright selector) ----------
+        elif button["type"] == "playwright":
+            locator = page.locator(button["value"]).first
+
+            try:
+                if await locator.count() == 0:
+                    return None
+
+                href = await locator.get_attribute("href")
+                if not href:
+                    return None
+
+            except Exception as e:
+                self.session_logger.info(f"Failed to read href from locator: {e}")
+                return None
+
+        else:
+            return None
+
+        # ---------- Normalize URL ----------
         new_url = (
             href
             if href.startswith(("http://", "https://"))
             else normalize_url(url, href, False)
         )
 
-        if new_url and not share_base_and_path_level(new_url, base_url):
+        if not new_url:
+            return None
+
+        if not share_base_and_path_level(new_url, base_url):
             self.session_logger.info(f"Skipping {new_url} (outside base URL).")
             return None
 
         self.session_logger.info(f"Following pagination link → {new_url}")
-
+        
         return new_url

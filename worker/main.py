@@ -14,10 +14,10 @@ from worker.session_processing import (
     process_analyser_job,
     process_checker_job,
 )
-from utils.redis_commands import get_session_status
+from worker.utils.redis_commands import get_session_status
 from worker.utils.logging_utils import get_session_logger
 from playwright_stealth import Stealth  # type: ignore
-from dependencies import (
+from worker.dependencies import (
     init_postgres_pool,
     close_postgres_pool,
     WORKER_ID,
@@ -47,6 +47,7 @@ logger = logging.getLogger(f"worker_{WORKER_ID}")
 # -------------------------------------------------------------------
 class WorkerState:
     def __init__(self) -> None:
+        """Initialize shared worker state: browser handles, event loop, and session counters."""
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None
@@ -62,6 +63,7 @@ worker_state = WorkerState()
 # SIGNAL HANDLING
 # -------------------------------------------------------------------
 def handle_shutdown_signal(signum, frame):
+    """Set the shutdown event on SIGINT/SIGTERM so the worker exits cleanly."""
     logger.info(f"Received signal {signum}, initiating shutdown...")
     if worker_state.loop:
         worker_state.loop.call_soon_threadsafe(worker_state.shutdown_event.set)
@@ -106,6 +108,7 @@ async def restart_stealth_browser(
         return browser
 
 async def ensure_browser():
+    """Restart the browser if it is disconnected, using the existing Playwright instance."""
     async with worker_state.browser_lock:
         if not worker_state.browser or not worker_state.browser.is_connected():
             logger.warning("Browser not connected — restarting")
@@ -118,9 +121,11 @@ async def ensure_browser():
 # RABBITMQ
 # -------------------------------------------------------------------
 async def connect_rabbitmq():
+    """Open a robust connection to RabbitMQ using the configured URL."""
     return await aio_pika.connect_robust(RABBITMQ_URL)
 
 async def handle_message(message: AbstractIncomingMessage):
+    """Process a single RabbitMQ message: route to analyser or checker job, then rotate the browser."""
     async with message.process(requeue=False):
         
         async with worker_state.sessions_lock:
@@ -200,6 +205,7 @@ async def handle_message(message: AbstractIncomingMessage):
                         )
                                     
 async def consume_messages():
+    """Connect to RabbitMQ, declare the worker queue, and consume messages until shutdown."""
     connection = await connect_rabbitmq()
     channel = await connection.channel()
 

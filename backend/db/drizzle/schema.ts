@@ -9,6 +9,7 @@ import {
   boolean,
   varchar,
   integer,
+  bigint,
 } from "drizzle-orm/pg-core";
 
 // --- Enums ---
@@ -76,6 +77,8 @@ export const allJobs = pgTable("all_jobs", {
   isExisting: boolean("is_existing").default(false).notNull(),
 
   jobTitleVectors: doublePrecision("job_title_vectors").array(),
+
+  hashJobDescriptionPage: bigint("hash_job_description_page", { mode: "number" }),
 
   creationDate: timestamp("creation_date", { withTimezone: true })
     .defaultNow()

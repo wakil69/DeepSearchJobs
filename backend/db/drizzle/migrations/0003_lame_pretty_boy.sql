@@ -1,0 +1,1 @@
+ALTER TABLE "all_jobs" ADD COLUMN "hash_job_description_page" bigint;

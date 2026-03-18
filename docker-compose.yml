@@ -5,6 +5,7 @@ services:
     restart: always
     env_file:
       - ./backend/.env.production
+      - ./backend/db/.env
     ports:
     - "4000:4000"
     depends_on:

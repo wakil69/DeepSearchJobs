@@ -52,12 +52,14 @@ async def call_llm_structured(
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        parsed_model = llm_response.choices[0].message.parsed
         
-        return parsed_model.model_dump()
+        raw_parsed = llm_response.choices[0].message.parsed
+        
+        return pydantic_model.model_validate(raw_parsed)
 
     # --- First attempt ---
     try:
+        
         return await _attempt_request()
 
     except Exception as e:

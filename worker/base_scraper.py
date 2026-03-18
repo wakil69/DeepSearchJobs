@@ -16,16 +16,23 @@ class BaseScraper:
         self.company_name = company_name
         self.session_logger = session_logger
         self.browser = browser
-        self.last_heartbeat = time.time()
         
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
 
-    def get_page(self) -> Page:
-        
-        assert self.page is not None 
-        
-        return self.page 
+    async def create_page(self) -> Page:
+        """Create and return a new page within the current browser context."""
+        assert self.context is not None, "Context not initialized"
+
+        page = await self.context.new_page()
+
+        return page
+
+    def get_context(self) -> BrowserContext:
+        """Return the current browser context, asserting it has been initialized."""
+        assert self.context is not None
+
+        return self.context
     
     def get_random_proxy(self, proxies: List[str]) -> Optional[dict]:
         """Return a random proxy config dict compatible with Playwright."""
@@ -73,7 +80,7 @@ class BaseScraper:
 
         return route.continue_()
 
-    async def create_context_with_proxy(self) -> Tuple[BrowserContext, Page]:
+    async def create_context_with_proxy(self) -> BrowserContext:
         """Create a new browser context using a random user agent and proxy (if provided)."""
         context_options: Dict[str, Any] = {
             "user_agent": random.choice(USER_AGENTS),
@@ -90,8 +97,6 @@ class BaseScraper:
         stealth = Stealth()
         await stealth.apply_stealth_async(context)
     
-        page = await context.new_page()
-
         await context.route(
             "**/*",
             lambda route, request: self.intercept_requests(
@@ -99,19 +104,15 @@ class BaseScraper:
             ),
         )
 
-        self.context, self.page = context, page
+        self.context = context
 
-        return context, page
+        return context
 
     async def clean_contexts_playwright(self):
+        """Close the current browser context and reset it to None."""
         try:
-            if getattr(self, "page", None) and self.page:
-                await self.page.close(run_before_unload=False)
-
             if getattr(self, "context", None) and self.context:
                 await self.context.close()
-
-            self.page = None
             self.context = None
             self.session_logger.info("Playwright contexts closed cleanly.")
         except Exception as e:
@@ -122,5 +123,6 @@ class BaseScraper:
         await self.clean_contexts_playwright()
         await self.create_context_with_proxy()
         self.session_logger.info("Playwright context restarted successfully.")
+
 
   

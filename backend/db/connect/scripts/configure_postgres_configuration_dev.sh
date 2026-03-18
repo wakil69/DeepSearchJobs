@@ -21,7 +21,7 @@ fi
 # -----------------------------
 # Resolve connection variables
 # -----------------------------
-PG_HOST="${PG_HOST_DEV}"
+PG_HOST="localhost" #"${PG_HOST_DEV}"
 PG_PORT="${PG_PORT}"
 PG_USER="${PG_USER_DEV}"
 PG_PASSWORD="${PG_PASSWORD_DEV}"
@@ -30,6 +30,15 @@ PG_DB="${PG_DATABASE_DEV}"
 DEBEZIUM_USER="${DEBEZIUM_USER}"
 DEBEZIUM_PASS="${DEBEZIUM_PWD}"
 
+echo "--- Resolved parameters ---"
+echo "  PG_HOST      = $PG_HOST"
+echo "  PG_PORT      = $PG_PORT"
+echo "  PG_USER      = $PG_USER"
+echo "  PG_PASSWORD  = $PG_PASSWORD"
+echo "  PG_DB        = $PG_DB"
+echo "  DEBEZIUM_USER= $DEBEZIUM_USER"
+echo "  DEBEZIUM_PASS= $DEBEZIUM_PASS"
+echo "---------------------------"
 echo "Connecting to PostgreSQL at $PG_HOST:$PG_PORT (DB: $PG_DB, User: $PG_USER)"
 
 # -----------------------------
@@ -61,10 +70,10 @@ sudo bash -c "
   grep -q '^max_replication_slots' $CONF_FILE || echo 'max_replication_slots = 10' >> $CONF_FILE
   grep -q '^max_wal_senders' $CONF_FILE || echo 'max_wal_senders = 10' >> $CONF_FILE
 
-  grep -q 'debezium_user' $HBA_FILE || echo '
+  grep -q '${DEBEZIUM_USER}' $HBA_FILE || echo '
 host replication ${DEBEZIUM_USER} 127.0.0.1/32       md5
 host all         ${DEBEZIUM_USER} 127.0.0.1/32       md5
-host all         all              172.17.0.0/16      md5
+host all         all              172.28.0.0/16      md5
 ' >> $HBA_FILE
 "
 

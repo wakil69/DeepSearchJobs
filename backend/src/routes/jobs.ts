@@ -210,7 +210,11 @@ export async function jobsRoutes(fastify: FastifyInstance) {
           page,
           pageSize,
         });
-      } catch (error) {
+      } catch (error: any) {
+        // Index not yet created (no jobs scraped yet) — return empty result
+        if (error?.meta?.body?.error?.type === "index_not_found_exception") {
+          return reply.status(200).send({ jobs: [], total: 0, page, pageSize });
+        }
         console.error("Error fetching jobs:", error);
         return reply.status(500).send({
           message: t("jobs.jobsFetchFailed"),

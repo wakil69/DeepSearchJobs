@@ -6,7 +6,7 @@ from worker.constants.blocked_domains import BLOCKED_DOMAINS
 from collections import deque, defaultdict
 from bs4 import BeautifulSoup, Tag
 from urllib.parse import urljoin, urlparse
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError, Browser
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError, Browser, Page
 from worker.types.worker_types import (
     CareerPagesResponse,
     IsJobListingPageResponse,
@@ -36,6 +36,7 @@ class FetchJobsListingsScraper(BaseScraper):
         browser: Browser,
         timeout=20000,
     ):
+        """Initialize the scraper with company details, browser instance, and an empty state."""
         super().__init__(company_id, company_name, session_logger, browser)
         self.base_url = base_url.rstrip("/")
         self.external_job_listing_pages: List[str] = []
@@ -47,7 +48,7 @@ class FetchJobsListingsScraper(BaseScraper):
         self.db_ops = DBOps(session_logger)
 
    
-    async def crawl_site_depth(self, base_url: str, max_depth: int = 1) -> List[str]:
+    async def crawl_site_depth(self, page: Page, base_url: str, max_depth: int = 1) -> List[str]:
         """
         Crawls a site using Playwright to extract emails, subpages, and external links.
         Limits crawling to `max_depth` hierarchical levels.
@@ -132,17 +133,15 @@ class FetchJobsListingsScraper(BaseScraper):
             if normalized_url in visited_subpages or depth > max_depth:
                 continue
 
-            assert self.page is not None, "Page not initialized"
-
             try:
 
-                await self.page.goto(
+                await page.goto(
                     normalized_url, timeout=self.timeout, wait_until="load"
                 )
 
-                await self.page.wait_for_timeout(random.uniform(1000, 3000))
+                await page.wait_for_timeout(random.uniform(1000, 3000))
 
-                normalized_url = self.page.url  # handle redirects
+                normalized_url = page.url  # handle redirects
 
                 if first_iteration:
                     self.base_url = normalized_url.rstrip("/")
@@ -153,16 +152,16 @@ class FetchJobsListingsScraper(BaseScraper):
 
                 visited_subpages.add(normalized_url)
 
-                await self.page.evaluate(
+                await page.evaluate(
                     "window.scrollTo(0, document.body.scrollHeight)"
                 )
 
-                await self.page.wait_for_timeout(
+                await page.wait_for_timeout(
                     random.uniform(1000, 3000)
                 )  # human-like delay
 
                 # === Extract content ===
-                html_content = await self.page.content()
+                html_content = await page.content()
                 soup = BeautifulSoup(html_content, "html.parser")
 
                 # Extract and store any visible emails
@@ -252,7 +251,7 @@ class FetchJobsListingsScraper(BaseScraper):
         return list(visited_subpages)
 
     async def crawl_site_path_prefix_only(
-        self, base_url: str, max_depth=1
+        self, page: Page, base_url: str, max_depth=1
     ) -> List[str]:
         """
         Crawls a site using Playwright to extract emails, subpages, and external links.
@@ -287,24 +286,23 @@ class FetchJobsListingsScraper(BaseScraper):
                 continue
 
             try:
-                assert self.page is not None, "Page not initialized"
 
-                await self.page.goto(
+                await page.goto(
                     normalized_url, timeout=self.timeout, wait_until="load"
                 )
 
-                await self.page.wait_for_timeout(random.uniform(1000, 3000))
+                await page.wait_for_timeout(random.uniform(1000, 3000))
 
-                self.session_logger.info(f"Visited Url: {self.page.url}")
+                self.session_logger.info(f"Visited Url: {page.url}")
 
-                await self.page.evaluate(
+                await page.evaluate(
                     "window.scrollTo(0, document.body.scrollHeight)"
                 )
 
                 visited_subpages.add(normalized_url)
 
                 # === Parse content ===
-                html_content = await self.page.content()
+                html_content = await page.content()
                 soup = BeautifulSoup(html_content, "html.parser")
 
                 # === Extract and store emails ===
@@ -465,7 +463,7 @@ class FetchJobsListingsScraper(BaseScraper):
             return []
 
     async def identify_job_listing_pages(
-        self, urls: set[str], retries: int = 1
+        self, page: Page, urls: set[str], retries: int = 1
     ) -> List[str]:
         """
         Checks which URLs are job listing pages using an LLM.
@@ -485,17 +483,15 @@ class FetchJobsListingsScraper(BaseScraper):
 
                 try:
 
-                    assert self.page is not None, "Page not initialized"
+                    await page.goto(url, timeout=self.timeout, wait_until="load")
 
-                    await self.page.goto(url, timeout=self.timeout, wait_until="load")
+                    await page.wait_for_timeout(random.uniform(1000, 3000))
 
-                    await self.page.wait_for_timeout(random.uniform(1000, 3000))
-
-                    await self.page.evaluate(
+                    await page.evaluate(
                         "window.scrollTo(0, document.body.scrollHeight)"
                     )
 
-                    html_content = await self.page.content()
+                    html_content = await page.content()
                     soup = BeautifulSoup(html_content, "html.parser")
 
                     # Remove irrelevant tags
@@ -573,9 +569,10 @@ class FetchJobsListingsScraper(BaseScraper):
 
         return job_listing_pages
 
-    async def find_internal_career_pages(self) -> List[str]:
+    async def find_internal_career_pages(self, page: Page) -> List[str]:
+        """Crawl the company's own site, identify career pages, and return deduplicated job listing URLs."""
         # --- Crawl the main site and collect all visited URLs
-        main_visited_pages = await self.crawl_site_depth(self.base_url)
+        main_visited_pages = await self.crawl_site_depth(page, self.base_url)
 
         # --- Prepare container for deduplicated relative paths
         #     We reduce redundancy by normalizing and trimming duplicate base paths
@@ -626,7 +623,7 @@ class FetchJobsListingsScraper(BaseScraper):
 
         # --- Ask LLM to identify which internal career pages are job listing pages (vs job detail pages)
         internal_job_listing_pages = await self.identify_job_listing_pages(
-            internal_career_pages
+            page, internal_career_pages
         )
 
         # --- Filter out blocked or irrelevant domains (LinkedIn, Indeed, etc.)
@@ -653,7 +650,7 @@ class FetchJobsListingsScraper(BaseScraper):
         for job_page_url in internal_job_listing_pages:
             if job_page_url != self.base_url:
                 subpages = await self.crawl_site_path_prefix_only(
-                    job_page_url, max_depth=1
+                    page, job_page_url, max_depth=1
                 )
                 for sub_url in subpages:
                     parsed = urlparse(sub_url)
@@ -697,7 +694,7 @@ class FetchJobsListingsScraper(BaseScraper):
         )
 
         deeper_job_pages = await self.identify_job_listing_pages(
-            deeper_career_pages_internal
+            page, deeper_career_pages_internal
         )
 
         deeper_job_pages = [
@@ -725,7 +722,8 @@ class FetchJobsListingsScraper(BaseScraper):
 
         return internal_job_listing_pages
 
-    async def find_external_career_pages(self) -> List[str]:
+    async def find_external_career_pages(self, page: Page) -> List[str]:
+        """Identify and crawl external job platforms linked from the company site, returning job listing URLs."""
 
         self.session_logger.info("Step 3: Identifying External Career Pages via LLM...")
 
@@ -802,7 +800,7 @@ class FetchJobsListingsScraper(BaseScraper):
             )
 
             # --- Crawl the external site to collect all subpages
-            external_visited_pages = await self.crawl_site_path_prefix_only(root_url)
+            external_visited_pages = await self.crawl_site_path_prefix_only(page, root_url)
 
             # --- Ensure the root URL itself is included
             external_visited_pages.append(root_url)
@@ -835,7 +833,7 @@ class FetchJobsListingsScraper(BaseScraper):
 
             pages_filtered_full.add(root_url)
 
-            all_identified = await self.identify_job_listing_pages(pages_filtered_full)
+            all_identified = await self.identify_job_listing_pages(page, pages_filtered_full)
 
             all_identified = [
                 url
@@ -862,28 +860,38 @@ class FetchJobsListingsScraper(BaseScraper):
 
         await self.create_context_with_proxy()
 
-        # --- Filter the internal career pages
-        self.internal_job_listing_pages = await self.find_internal_career_pages()
+        page = await self.create_page()
+        
+        try:
+        
+            # --- Filter the internal career pages
+            self.internal_job_listing_pages = await self.find_internal_career_pages(page)
 
-        self.session_logger.info(
-            f"Final Job Pages Identified on Internal Site: {self.internal_job_listing_pages}"
-        )
+            self.session_logger.info(
+                f"Final Job Pages Identified on Internal Site: {self.internal_job_listing_pages}"
+            )
 
-        self.external_job_listing_pages = await self.find_external_career_pages()
+            self.external_job_listing_pages = await self.find_external_career_pages(page)
 
-        self.session_logger.info(
-            f"Final External Pages Identified: {self.external_job_listing_pages}"
-        )
+            self.session_logger.info(
+                f"Final External Pages Identified: {self.external_job_listing_pages}"
+            )
 
-        await self.clean_contexts_playwright()
+        finally:
 
-        await self.db_ops.save_db_job_listing_pages(
-            company_name=self.company_name,
-            company_id=self.company_id,
-            external_job_listing_pages=self.external_job_listing_pages,
-            internal_job_listing_pages=self.internal_job_listing_pages,
-            emails=self.emails
-        )
+            await page.close()
+            
+            await self.clean_contexts_playwright()
+
+            await self.db_ops.save_db_job_listing_pages(
+                company_name=self.company_name,
+                company_id=self.company_id,
+                external_job_listing_pages=self.external_job_listing_pages,
+                internal_job_listing_pages=self.internal_job_listing_pages,
+                emails=self.emails
+            )
+
+
 
         return {
             "website": self.base_url,

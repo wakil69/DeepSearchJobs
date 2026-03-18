@@ -51,7 +51,7 @@ fi
 
 # Run Drizzle migrations inside the backend container
 echo "Running Drizzle migrations inside backend container..."
-docker compose exec backend-play2path bash -c "
+docker compose exec backend-deepsearchjobs bash -c "
   if [ -d '$DB_DIR' ]; then
     echo 'Found directory $DB_DIR. Running migrations...';
     cd '$DB_DIR' && NODE_ENV=production npx drizzle-kit push;
@@ -66,7 +66,7 @@ docker compose exec backend-play2path bash -c "
 # Configure PostgreSQL (run inside the container)
 echo "Configuring PostgreSQL for Debezium..."
 
-docker exec -i postgres-play2path bash -c "
+docker exec -i postgres-deepsearchjobs bash -c "
   if [ -f '/scripts/configure_postgres_configuration.sh' ]; then
     echo 'Running /scripts/configure_postgres_configuration.sh...'
     bash /scripts/configure_postgres_configuration.sh

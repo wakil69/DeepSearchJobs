@@ -1,12 +1,15 @@
 import os
 import re
+import io
 import base64
-import requests
 import random
+import aiofiles
+import aiofiles.os
 import aioboto3
+import aiohttp
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, Page
-from typing import Optional, Callable
+from typing import Optional
 from worker.dependencies import (
     CLOUDFLARE_R2_BUCKET,
     CLOUDFLARE_R2_ENDPOINT,
@@ -14,25 +17,23 @@ from worker.dependencies import (
     CLOUDFLARE_R2_SECRET_KEY,
 )
 
+
 class FindCompanyLogo:
     def __init__(
         self,
-        get_page: Callable[[], Page],
         session_logger,
         company_name: str,
         company_id: int,
         timeout=20000,
     ):
-        self.get_page = get_page
         self.company_name = company_name
         self.company_id = company_id
         self.session_logger = session_logger
         self.timeout = timeout
 
-    async def handle_google_consent(self) -> None:
+    async def handle_google_consent(self, page) -> None:
         """Detect and click the 'Reject all' button if the Google consent popup appears."""
         try:
-            page = self.get_page()
             locator = page.locator("//button[contains(., 'Reject all')]").first
             await locator.wait_for(timeout=5000)
             await locator.click()
@@ -42,7 +43,7 @@ class FindCompanyLogo:
         except Exception as e:
             self.session_logger.warning(f"Error handling Google consent popup: {e}")
 
-    async def get_company_logo_url(self) -> Optional[str]:
+    async def get_company_logo_url(self, page: Page) -> Optional[str]:
         """
         Search for a company's logo on Google Images, download it, and upload to Cloudflare R2 (or other service...).
         """
@@ -54,8 +55,6 @@ class FindCompanyLogo:
         try:
             os.makedirs("./tmp", exist_ok=True)
 
-            page = self.get_page()
-
             # Go to Google Images
             await page.goto(
                 google_images_url, timeout=self.timeout, wait_until="load"
@@ -64,7 +63,7 @@ class FindCompanyLogo:
             await page.wait_for_timeout(random.uniform(1000, 3000))
 
             # Handle Google consent pop-up if it appears
-            await self.handle_google_consent()
+            await self.handle_google_consent(page)
 
             # Wait for at least one image result to load
             locator = page.locator("//div[contains(@class,'mNsIhb')]//img").first
@@ -82,10 +81,10 @@ class FindCompanyLogo:
                 self.session_logger.warning(
                     f"The logo is a base64-encoded image for {self.company_name}. Decoding..."
                 )
-                temp_path = self.save_base64_image(logo_url)
+                temp_path = await self.save_base64_image(logo_url)
             else:
                 self.session_logger.info(f"Found logo URL for {self.company_name}: {logo_url}")
-                temp_path = self.download_image(logo_url)
+                temp_path = await self.download_image(logo_url)
 
             # Upload to Cloudflare R2
             if temp_path:
@@ -103,7 +102,7 @@ class FindCompanyLogo:
 
         return None
 
-    def save_base64_image(self, base64_data: str) -> Optional[str]:
+    async def save_base64_image(self, base64_data: str) -> Optional[str]:
         """
         Extracts and saves a base64 image as a file.
         """
@@ -121,8 +120,8 @@ class FindCompanyLogo:
             filename = f"{self.company_name.replace(' ', '_')}.{image_extension}"
             temp_path = f"./tmp/{filename}"
 
-            with open(temp_path, "wb") as file:
-                file.write(image_data)
+            async with aiofiles.open(temp_path, "wb") as file:
+                await file.write(image_data)
 
             self.session_logger.info(f"Base64 image saved as {temp_path}")
             return temp_path
@@ -131,20 +130,20 @@ class FindCompanyLogo:
             self.session_logger.error(f"Error decoding base64 image: {e}")
             return None
 
-    def download_image(self, image_url: str) -> Optional[str]:
+    async def download_image(self, image_url: str) -> Optional[str]:
         """
         Downloads an image from a URL and saves it as a file.
         """
         try:
-            response = requests.get(image_url, stream=True)
-            response.raise_for_status()
-
             filename = f"{self.company_name.replace(' ', '_')}.png"
             temp_path = f"./tmp/{filename}"
 
-            with open(temp_path, "wb") as file:
-                for chunk in response.iter_content(1024):
-                    file.write(chunk)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(image_url) as response:
+                    response.raise_for_status()
+                    async with aiofiles.open(temp_path, "wb") as file:
+                        async for chunk in response.content.iter_chunked(1024):
+                            await file.write(chunk)
 
             self.session_logger.info(f"Image downloaded: {temp_path}")
             return temp_path
@@ -159,32 +158,27 @@ class FindCompanyLogo:
         """
         try:
             _, file_extension = os.path.splitext(file_path)
-
             object_key = f"companies/{self.company_id}/logo/logo{file_extension}"
 
-            session = aioboto3.Session()
+            async with aiofiles.open(file_path, "rb") as file:
+                file_content = await file.read()
 
-            async with session.client(
+            async with aioboto3.Session().client(
                 "s3",
                 endpoint_url=CLOUDFLARE_R2_ENDPOINT,
                 aws_access_key_id=CLOUDFLARE_R2_ACCESS_KEY,
                 aws_secret_access_key=CLOUDFLARE_R2_SECRET_KEY,
-                region_name="auto",
             ) as s3:
-
-                with open(file_path, "rb") as file:
-                    await s3.upload_fileobj(
-                        file,
-                        CLOUDFLARE_R2_BUCKET,
-                        object_key,
-                    )
+                await s3.upload_fileobj(
+                    io.BytesIO(file_content), CLOUDFLARE_R2_BUCKET, object_key
+                )
 
             cloudflare_url = (
                 f"{CLOUDFLARE_R2_ENDPOINT}/{CLOUDFLARE_R2_BUCKET}/{object_key}"
             )
             self.session_logger.info(f"Uploaded to Cloudflare: {cloudflare_url}")
 
-            os.remove(file_path)
+            await aiofiles.os.remove(file_path)
             return cloudflare_url
 
         except Exception as e:

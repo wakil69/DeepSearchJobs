@@ -1,12 +1,17 @@
+import asyncio
 import worker.dependencies as deps
 
 from psycopg.types.json import Json
 from typing import List, Optional
 from worker.types.worker_types import Job
 
+MAX_DB_ATTEMPTS = 3
+RETRY_DELAY = 2.0
+
 
 class DBOps:
     def __init__(self, session_logger) -> None:
+        """Initialize DBOps with a session logger."""
         self.session_logger = session_logger
 
     async def save_db_job_listing_pages(
@@ -17,42 +22,42 @@ class DBOps:
         external_job_listing_pages: List[str],
         emails: set[str],
     ) -> None:
-        """Save scraping results into the database.
-        Returns:
-            int: 1 if the update succeeded, raises Exception otherwise.
-        """
+        """Save scraping results into the database."""
 
-        if deps.pool_postgres is None:
-            raise RuntimeError("PostgreSQL pool not initialized")
+        pool = deps.get_pool()
 
-        try:
+        for attempt in range(1, MAX_DB_ATTEMPTS + 1):
+            try:
+                async with pool.connection() as conn:
+                    async with conn.transaction():
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                """
+                                UPDATE companies
+                                SET emails = %s,
+                                    external_job_listing_pages = %s,
+                                    internal_job_listing_pages = %s
+                                WHERE id = %s
+                                """,
+                                (
+                                    list(emails) or None,
+                                    external_job_listing_pages or None,
+                                    internal_job_listing_pages or None,
+                                    company_id,
+                                ),
+                            )
+                return
 
-            async with deps.pool_postgres.connection() as conn:
-                async with conn.transaction():
-                    async with conn.cursor() as cur:
-                        await cur.execute(
-                            """
-                            UPDATE companies
-                            SET emails = %s, 
-                                external_job_listing_pages = %s, 
-                                internal_job_listing_pages = %s
-                            WHERE id = %s
-                            """,
-                            (
-                                list(emails) or None,
-                                external_job_listing_pages or None,
-                                internal_job_listing_pages or None,
-                                company_id,
-                            ),
-                        )
+            except Exception:
+                self.session_logger.exception(
+                    f"Database error for company {company_name}, company ID: {company_id} (attempt {attempt}/{MAX_DB_ATTEMPTS})"
+                )
+                if attempt < MAX_DB_ATTEMPTS:
+                    await asyncio.sleep(RETRY_DELAY)
+                else:
+                    raise
 
-        except Exception:
-            self.session_logger.exception(
-                f"Database error for company {company_name}, company ID: {company_id}"
-            )
-            raise
-
-    async def insert_jobs_and_emails_in_db(
+    async def _insert_jobs_and_emails_in_db(
         self,
         conn,
         company_id,
@@ -71,8 +76,7 @@ class DBOps:
             external_job_listing_pages = external_job_listing_pages or None
             internal_job_listing_pages = internal_job_listing_pages or None
             containers_html = {
-                base_url: list(values)
-                for base_url, values in containers_html.items()
+                base_url: list(values) for base_url, values in containers_html.items()
             }
 
             await cur.execute(
@@ -93,14 +97,10 @@ class DBOps:
             )
 
             if not new_job_offers:
-                self.session_logger.info(
-                    "No job offers to insert for this company."
-                )
+                self.session_logger.info("No job offers to insert for this company.")
                 return
 
-            job_urls = [
-                job["job_url"] for job in new_job_offers if job.get("job_url")
-            ]
+            job_urls = [job["job_url"] for job in new_job_offers if job.get("job_url")]
 
             await cur.execute(
                 """
@@ -111,7 +111,7 @@ class DBOps:
                 """,
                 (job_urls,),
             )
-            
+
             existing_urls = {row[0] for row in await cur.fetchall()}
 
             self.session_logger.info(
@@ -119,9 +119,9 @@ class DBOps:
             )
 
             for job in new_job_offers:
-                
+
                 job_url = job.get("job_url")
-                
+
                 if not job_url:
                     continue
 
@@ -136,6 +136,7 @@ class DBOps:
                     job.get("contract_type"),
                     job.get("salary"),
                     job.get("job_title_vector"),
+                    job.get("hash_job_description_page"),
                 )
 
                 if job_url in existing_urls:
@@ -153,11 +154,12 @@ class DBOps:
                             contract_type = %s,
                             salary = %s,
                             job_title_vectors = %s,
+                            hash_job_description_page = %s,
                             is_existing = TRUE
                         WHERE job_url = %s
                         AND is_existing = TRUE;
                         """,
-                        (*job_record[:4], *job_record[5:10], job_record[4]),
+                        (*job_record[:4], *job_record[5:11], job_record[4]),
                     )
                 else:
                     # Insert new job
@@ -166,26 +168,25 @@ class DBOps:
                         INSERT INTO all_jobs (
                             company_id, job_title, location_country, location_region,
                             job_url, job_description, skills_required, contract_type,
-                            salary, job_title_vectors, is_existing
+                            salary, job_title_vectors, hash_job_description_page, is_existing
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE);
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE);
                         """,
                         job_record,
                     )
-                    
+
             self.session_logger.info(
                 "Successfully inserted/updated all job offers for company."
             )
 
-    async def update_old_jobs(self, conn, company_id, old_job_offers) -> None:
+    async def _update_old_jobs(self, conn, company_id, old_job_offers) -> None:
         """Set is_existing = FALSE for old job URLs no longer active (PostgreSQL)."""
         if not old_job_offers:
             self.session_logger.info("No old jobs to update.")
             return
 
-
         async with conn.cursor() as cur:
-            
+
             await cur.execute(
                 """
                 UPDATE all_jobs
@@ -213,18 +214,15 @@ class DBOps:
     ) -> None:
         """Save scraping results into the database."""
 
-        if deps.pool_postgres is None:
-            raise RuntimeError("PostgreSQL pool not initialized")
+        pool = deps.get_pool()
 
-        try:
+        for attempt in range(1, MAX_DB_ATTEMPTS + 1):
+            try:
+                async with pool.connection() as conn:
+                    async with conn.transaction():
+                        await self._update_old_jobs(conn, company_id, old_job_offers)
 
-            async with deps.pool_postgres.connection() as conn:
-                async with conn.transaction():
-                    async with conn.cursor() as cur:
-
-                        await self.update_old_jobs(conn, company_id, old_job_offers)
-
-                        await self.insert_jobs_and_emails_in_db(
+                        await self._insert_jobs_and_emails_in_db(
                             conn,
                             company_id=company_id,
                             website=website,
@@ -233,9 +231,15 @@ class DBOps:
                             internal_job_listing_pages=internal_job_listing_pages,
                             containers_html=containers_html,
                             new_job_offers=new_job_offers,
-                            company_description=company_description
+                            company_description=company_description,
                         )
+                return
 
-        except Exception as e:
-            self.session_logger.error(f"Database error for company {company_name}: {e}")
-            raise
+            except Exception as e:
+                self.session_logger.error(
+                    f"Database error for company {company_name}: {e} (attempt {attempt}/{MAX_DB_ATTEMPTS})"
+                )
+                if attempt < MAX_DB_ATTEMPTS:
+                    await asyncio.sleep(RETRY_DELAY)
+                else:
+                    raise
