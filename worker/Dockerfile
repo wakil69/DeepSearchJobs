@@ -1,5 +1,5 @@
-# FROM ghcr.io/wakil69/deepsearchjobs/base_worker:latest
-FROM deepsearchjobs-base
+FROM ghcr.io/wakil69/deepsearchjobs/base_worker:latest
+# FROM deepsearchjobs-base
 
 WORKDIR /app
 
